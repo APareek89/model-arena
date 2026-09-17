@@ -73,15 +73,23 @@ export async function POST(req) {
   try { parsed = JSON.parse(text); } catch { return Response.json({ error: "Grader returned non-JSON output", raw: text.slice(0, 500) }, { status: 502 }); }
 
   const byLabel = Object.fromEntries(shown.map((s) => [s.label, s.model]));
+  const normalizeLabel = (value) => {
+    const text = String(value ?? "").toUpperCase();
+    const m = text.match(/(?:ANSWER\s*)?\b([A-F])\b/);
+    return m ? m[1] : text.trim().slice(-1);
+  };
   const scores = {};
   for (const s of parsed.scores || []) {
-    const model = byLabel[s.label]; if (!model) continue;
+    const model = byLabel[normalizeLabel(s.label)]; if (!model) continue;
     const acc = clamp(s.accuracy), help = clamp(s.helpfulness), fmt = clamp(s.format);
     scores[model] = { accuracy: acc, helpfulness: help, format: fmt, overall: Math.round(((acc + help + fmt) / 3) * 10) / 10, reason: String(s.reason || "") };
   }
-  const best = byLabel[parsed.best] || null;
   const ranking = Object.entries(scores).sort((a, b) => b[1].overall - a[1].overall).map(([m]) => m);
-  return Response.json({ grader, scores, best, ranking, ms: Date.now() - started, usage: j.usageMetadata || null });
+  const best = byLabel[normalizeLabel(parsed.best)] || ranking[0] || null;
+  if (!Object.keys(scores).length) {
+    return Response.json({ error: `Grader labels did not match the answers: ${JSON.stringify((parsed.scores || []).map((s) => s.label))}`, raw: text.slice(0, 500) }, { status: 502 });
+  }
+  return Response.json({ grader, scores, best, ranking, returnedLabels: (parsed.scores || []).map((s) => s.label), ms: Date.now() - started, usage: j.usageMetadata || null });
 }
 
 function clamp(v) { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : 1; }
