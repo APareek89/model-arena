@@ -41,7 +41,7 @@ function csvEscape(v) { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"$
 
 export default function Page() {
   const [loaded, setLoaded] = useState(false);
-  const [config, setConfig] = useState({ needsKey: false, hf: true, gemini: true });
+  const [config, setConfig] = useState({ needsKey: false, hf: true, gemini: true, loaded: false });
   const [accessKey, setAccessKey] = useState("");
   const [keyDraft, setKeyDraft] = useState("");
   const [keyOk, setKeyOk] = useState(true);
@@ -101,7 +101,7 @@ export default function Page() {
 
   useEffect(() => {
     if (!loaded) return;
-    fetch("/api/config").then((r) => r.json()).then((c) => { setConfig(c); if (c.needsKey && !accessKey) setKeyOk(false); }).catch(() => {});
+    fetch("/api/config").then((r) => r.json()).then((c) => { setConfig({ ...c, loaded: true }); if (c.needsKey && !accessKey) setKeyOk(false); }).catch(() => setConfig((prev) => ({ ...prev, loaded: true })));
   }, [loaded, accessKey]);
 
   const refreshModels = useCallback(async () => {
@@ -110,10 +110,10 @@ export default function Page() {
       setAvailable(m.models || []);
       if (g.models?.length) { setGraders(g.models); setGrader((cur) => (g.models.includes(cur) ? cur : g.models[0])); }
       setKeyOk(true);
-    } catch (e) { setNotice({ kind: "error", text: e.message }); }
+    } catch (e) { if (!/Access key/.test(e.message)) setNotice({ kind: "error", text: e.message }); }
   }, [api]);
 
-  useEffect(() => { if (loaded && keyOk && (!config.needsKey || accessKey)) refreshModels(); }, [loaded, keyOk, config.needsKey, accessKey, refreshModels]);
+  useEffect(() => { if (loaded && config.loaded && keyOk && (!config.needsKey || accessKey)) refreshModels(); }, [loaded, config.loaded, keyOk, config.needsKey, accessKey, refreshModels]);
 
   useEffect(() => { if (!notice) return; const t = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(t); }, [notice]);
 
