@@ -1,7 +1,10 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download, FlaskConical, Play, Plus, RefreshCw, Square, Trash2, X } from 'lucide-react';
+import AccountGate from './components/AccountGate';
+import { session, ownerStorageKey } from './client/session.mjs';
+import { LIMITS, newId as uid, parsePromptFile, csvEscape, readWorkspace, runQueue, invalidateComparison } from './client/workspace.mjs';
 
-const STORAGE_KEY = "model-arena:v1";
 const DEFAULT_SYSTEM = "You are a helpful assistant. Answer clearly with specific reasons. If a reference is supplied, use only the reference and say when it does not contain the answer.";
 const DEFAULT_MODELS = ["Qwen/Qwen3-4B-Instruct-2507", "meta-llama/Llama-3.1-8B-Instruct", ""];
 const SAMPLE_PROMPTS = [
@@ -9,42 +12,30 @@ const SAMPLE_PROMPTS = [
   { prompt: "Recommend a romantic movie. Give three distinct reasons and one caveat, under 120 words.", reference: "" },
   { prompt: "Who directed Inception (2010)? Answer with the name only.", reference: "Christopher Nolan" },
 ];
-const GRADER_FALLBACK = ["gemini-3.1-pro-preview", "gemini-pro-latest", "gemini-2.5-pro"];
+const GRADER_FALLBACK = [];
 const CONCURRENCY = 3;
 const GRADE_CONCURRENCY = 2;
 
-const uid = () => Math.random().toString(36).slice(2, 10);
 const ck = (pid, model) => `${pid}|${model}`;
 const fmtMs = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`);
 
-function parsePromptFile(text) {
-  const data = JSON.parse(text);
-  const list = Array.isArray(data) ? data : Array.isArray(data.prompts) ? data.prompts : null;
-  if (!list) throw new Error("Expected a JSON array, or an object with a \"prompts\" array.");
-  return list.map((item) => {
-    if (typeof item === "string") return { id: uid(), prompt: item, reference: "" };
-    const prompt = item.prompt ?? item.question ?? item.input ?? item.text ?? item.user ?? "";
-    const reference = item.reference ?? item.reference_answer ?? item.answer ?? item.expected ?? "";
-    if (!String(prompt).trim()) throw new Error("Every item needs a prompt, question, input or text field.");
-    return { id: String(item.id || uid()), prompt: String(prompt), reference: String(reference || "") };
-  });
-}
-
-function download(name, text, type) {
+function download(name, text, type, epoch) {
+  session.assert(epoch);
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a"); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function csvEscape(v) { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
-
 export default function Page() {
+  return <AccountGate>{account => <ArenaWorkspace key={account.user?.id || 'local-fixture'} ownerId={account.user?.id || 'local-fixture'} />}</AccountGate>;
+}
+
+function ArenaWorkspace({ ownerId }) {
   const [loaded, setLoaded] = useState(false);
-  const [config, setConfig] = useState({ needsKey: false, hf: true, gemini: true, loaded: false });
-  const [accessKey, setAccessKey] = useState("");
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyOk, setKeyOk] = useState(true);
+  const [config, setConfig] = useState({ hf: false, gemini: false, loaded: false });
+  const [exampleId, setExampleId] = useState(null);
+  const [loadingExample, setLoadingExample] = useState(false);
   const [available, setAvailable] = useState([]);
   const [graders, setGraders] = useState(GRADER_FALLBACK);
   const [models, setModels] = useState(DEFAULT_MODELS);
@@ -53,8 +44,8 @@ export default function Page() {
   const [placement, setPlacement] = useState("user");
   const [maxTokens, setMaxTokens] = useState(300);
   const [temperature, setTemperature] = useState(0);
-  const [grader, setGrader] = useState(GRADER_FALLBACK[0]);
-  const [prompts, setPrompts] = useState(() => SAMPLE_PROMPTS.map((p) => ({ id: uid(), ...p })));
+  const [grader, setGrader] = useState("");
+  const [prompts, setPrompts] = useState(() => SAMPLE_PROMPTS.map((p, i) => ({ id: `sample-${i + 1}`, ...p })));
   const [results, setResults] = useState({});
   const [grades, setGrades] = useState({});
   const [running, setRunning] = useState(false);
@@ -63,57 +54,90 @@ export default function Page() {
   const stopRef = useRef(false);
 
   const activeModels = useMemo(() => models.map((m) => m.trim()).filter(Boolean).filter((m, i, a) => a.indexOf(m) === i), [models]);
-  const smallModels = useMemo(() => available.filter((m) => m.small).map((m) => m.id), [available]);
+  const smallModels = useMemo(() => available.filter((m) => m.small && m.funded === true).map((m) => m.id), [available]);
+
+  const ownerEpoch = useRef(session.capture());
+  const exampleRef = useRef(null);
+  const graderRef = useRef(grader);
+  useEffect(() => { graderRef.current = grader; }, [grader]);
+  const lifetime = useRef(null);
+  const readers = useRef(new Set());
+  const busyRef = useRef(false);
+  const storageWritable = useRef(true);
+  const STORAGE_KEY = ownerStorageKey(ownerId);
 
   useEffect(() => {
+    const controller = new AbortController(); lifetime.current = controller;
+    const epoch = ownerEpoch.current;
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      const saved = readWorkspace(localStorage, STORAGE_KEY);
       if (saved) {
-        if (saved.accessKey) { setAccessKey(saved.accessKey); setKeyDraft(saved.accessKey); }
-        if (Array.isArray(saved.models)) setModels([...saved.models, "", "", ""].slice(0, 3));
-        if (typeof saved.system === "string") setSystem(saved.system);
-        if (typeof saved.corpus === "string") setCorpus(saved.corpus);
-        if (saved.placement) setPlacement(saved.placement);
-        if (saved.maxTokens) setMaxTokens(saved.maxTokens);
-        if (typeof saved.temperature === "number") setTemperature(saved.temperature);
-        if (saved.grader) setGrader(saved.grader);
-        if (Array.isArray(saved.prompts) && saved.prompts.length) setPrompts(saved.prompts);
-        if (saved.results) setResults(saved.results);
-        if (saved.grades) setGrades(saved.grades);
+        setModels(saved.models); setSystem(saved.system); setCorpus(saved.corpus);
+        setPlacement(saved.placement); setMaxTokens(saved.maxTokens); setTemperature(saved.temperature);
+        if (typeof saved.grader === 'string') setGrader(saved.grader);
+        setPrompts(saved.prompts); setResults(saved.results); setGrades(saved.grades);
+        if (typeof saved.exampleId === 'string') { setExampleId(saved.exampleId); exampleRef.current = saved.exampleId; }
       }
-    } catch {}
+    } catch { storageWritable.current = false; setNotice({ kind: 'error', text: 'Saved data could not be opened. The previous browser copy has not been removed.' }); }
     setLoaded(true);
-  }, []);
+    return () => { controller.abort(); stopRef.current = true; readers.current.forEach(reader => reader.abort()); readers.current.clear(); };
+  }, [STORAGE_KEY]);
+
+  useEffect(() => {
+    if (!loaded || !storageWritable.current || !session.current(ownerEpoch.current) || lifetime.current?.signal.aborted) return;
+    try {
+      const saved = JSON.stringify({ models, system, corpus, placement, maxTokens, temperature, grader, prompts, results, grades, exampleId });
+      if (saved.length > LIMITS.savedBytes) throw new Error('storage');
+      localStorage.setItem(STORAGE_KEY, saved);
+    } catch { setNotice({ kind: 'error', text: 'Browser storage is full. Export your results to keep this comparison.' }); }
+  }, [loaded, STORAGE_KEY, models, system, corpus, placement, maxTokens, temperature, grader, prompts, results, grades, exampleId]);
+
+  const api = useCallback((path, opts = {}, epoch = ownerEpoch.current) => session.request(path, { ...opts, signal: lifetime.current?.signal, headers: { 'Content-Type': 'application/json', ...opts.headers } }, epoch), []);
+  const active = epoch => session.current(epoch) && !lifetime.current?.signal.aborted;
 
   useEffect(() => {
     if (!loaded) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ accessKey, models, system, corpus, placement, maxTokens, temperature, grader, prompts, results, grades })); } catch {}
-  }, [loaded, accessKey, models, system, corpus, placement, maxTokens, temperature, grader, prompts, results, grades]);
-
-  const api = useCallback(async (path, opts = {}) => {
-    const headers = { "Content-Type": "application/json", ...(accessKey ? { "x-app-key": accessKey } : {}) };
-    const r = await fetch(path, { ...opts, headers });
-    let j = null; try { j = await r.json(); } catch {}
-    if (r.status === 401) { setKeyOk(false); throw new Error("Access key required, or the key is wrong."); }
-    if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-    return j;
-  }, [accessKey]);
-
-  useEffect(() => {
-    if (!loaded) return;
-    fetch("/api/config").then((r) => r.json()).then((c) => { setConfig({ ...c, loaded: true }); if (c.needsKey && !accessKey) setKeyOk(false); }).catch(() => setConfig((prev) => ({ ...prev, loaded: true })));
-  }, [loaded, accessKey]);
+    const epoch = ownerEpoch.current;
+    api('/api/config', {}, epoch).then(c => { if (active(epoch)) setConfig({ ...c, loaded: true }); }).catch(e => { if (active(epoch) && e.name !== 'AbortError') { setConfig(prev => ({ ...prev, loaded: true })); setNotice({ kind: 'error', text: e.message }); } });
+  }, [loaded, api]);
 
   const refreshModels = useCallback(async () => {
-    try {
-      const [m, g] = await Promise.all([api("/api/models"), api("/api/grader-models")]);
-      setAvailable(m.models || []);
-      if (g.models?.length) { setGraders(g.models); setGrader((cur) => (g.models.includes(cur) ? cur : g.models[0])); }
-      setKeyOk(true);
-    } catch (e) { if (!/Access key/.test(e.message)) setNotice({ kind: "error", text: e.message }); }
+    const epoch = ownerEpoch.current;
+    const [m, g] = await Promise.allSettled([api('/api/models', {}, epoch), api('/api/grader-models', {}, epoch)]);
+    if (!active(epoch)) return;
+    const errors = [];
+    if (m.status === 'fulfilled') setAvailable(m.value.models || []);
+    else if (m.reason.name !== 'AbortError') errors.push(`HF model list: ${m.reason.message}`);
+    if (g.status === 'fulfilled') {
+      if (g.value.models?.length) {
+        setGraders(g.value.models);
+        if (!exampleRef.current && !g.value.models.includes(graderRef.current)) { setGrader(g.value.models.includes(g.value.default) ? g.value.default : g.value.models[0]); setGrades({}); }
+      }
+    } else if (g.reason.name !== 'AbortError') errors.push(`Grader list: ${g.reason.message}`);
+    if (errors.length) setNotice({ kind: 'error', text: errors.join(' ') });
   }, [api]);
+  useEffect(() => { if (loaded && config.loaded) refreshModels(); }, [loaded, config.loaded, refreshModels]);
 
-  useEffect(() => { if (loaded && config.loaded && keyOk && (!config.needsKey || accessKey)) refreshModels(); }, [loaded, config.loaded, keyOk, config.needsKey, accessKey, refreshModels]);
+  function edit(options = {}) {
+    storageWritable.current = true;
+    setResults(prev => invalidateComparison(prev, {}, options).results);
+    setGrades(prev => invalidateComparison({}, prev, options).grades);
+    if (exampleId) { exampleRef.current = null; setExampleId(null); setNotice({ kind: 'info', text: 'You are editing a live comparison. Run and Grade now use the configured providers.' }); }
+  }
+  async function loadExample() {
+    if (busyRef.current) return;
+    const epoch = ownerEpoch.current; setLoadingExample(true); busyRef.current = true;
+    try {
+      const example = await api('/api/example', {}, epoch); if (!active(epoch)) return;
+      storageWritable.current = true;
+      const x = example.settings;
+      setModels([...x.models, '', '', ''].slice(0, 3)); setSystem(x.system); setCorpus(x.corpus);
+      setPlacement(x.placement); setMaxTokens(x.maxTokens); setTemperature(x.temperature); setGrader(x.grader);
+      setPrompts(example.prompts); setResults({}); setGrades({}); exampleRef.current = example.id; setExampleId(example.id);
+      setNotice({ kind: 'info', text: 'Prepared example loaded. Select Run all, then Grade all. Both are free.' });
+    } catch (e) { if (active(epoch) && e.name !== 'AbortError') setNotice({ kind: 'error', text: e.message }); }
+    finally { if (active(epoch)) { setLoadingExample(false); busyRef.current = false; } }
+  }
 
   useEffect(() => { if (!notice) return; const t = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(t); }, [notice]);
 
@@ -129,52 +153,67 @@ export default function Page() {
     return msgs;
   }
 
-  async function runOne(p, m) {
+  async function runOne(p, m, epoch) {
+    if (!active(epoch)) return;
     setResults((prev) => ({ ...prev, [ck(p.id, m)]: { status: "running" } }));
     try {
-      const j = await api("/api/generate", { method: "POST", body: JSON.stringify({ model: m, messages: buildMessages(p.prompt), max_tokens: maxTokens, temperature }) });
+      const j = await api("/api/generate", { method: "POST", body: JSON.stringify({ model: m, messages: buildMessages(p.prompt), max_tokens: maxTokens, temperature, ...(exampleId ? { example_id: exampleId, prompt_id: p.id } : {}) }) }, epoch);
+      if (!active(epoch)) return;
       setResults((prev) => ({ ...prev, [ck(p.id, m)]: { status: "done", ...j } }));
     } catch (e) {
+      if (!active(epoch) || e.name === 'AbortError') return;
       setResults((prev) => ({ ...prev, [ck(p.id, m)]: { status: "error", error: e.message } }));
     }
   }
 
   async function runAll(onlyId = null) {
+    if (busyRef.current) return;
+    const epoch = ownerEpoch.current;
     if (!activeModels.length) return setNotice({ kind: "error", text: "Pick at least one model." });
     const targets = prompts.filter((p) => p.prompt.trim() && (!onlyId || p.id === onlyId));
     if (!targets.length) return setNotice({ kind: "error", text: "Add at least one prompt." });
     const jobs = []; for (const p of targets) for (const m of activeModels) jobs.push({ p, m });
-    setRunning(true); stopRef.current = false;
+    setRunning(true); busyRef.current = true; stopRef.current = false;
     setResults((prev) => { const n = { ...prev }; for (const { p, m } of jobs) n[ck(p.id, m)] = { status: "queued" }; return n; });
     setGrades((prev) => { const n = { ...prev }; for (const p of targets) delete n[p.id]; return n; });
-    let i = 0;
-    const worker = async () => { while (i < jobs.length && !stopRef.current) { const job = jobs[i++]; await runOne(job.p, job.m); } };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, worker));
-    setRunning(false);
+    await runQueue(jobs, CONCURRENCY, job => runOne(job.p, job.m, epoch), () => !stopRef.current && active(epoch));
+    if (active(epoch)) {
+      setResults(prev => Object.fromEntries(Object.entries(prev).map(([id, r]) => [id, r.status === 'queued' ? { status: 'stopped' } : r])));
+      setRunning(false); busyRef.current = false;
+    }
   }
 
   function rowDone(p) { return activeModels.length > 0 && activeModels.every((m) => results[ck(p.id, m)]?.status === "done"); }
 
-  async function gradeRow(p) {
+  async function gradeRow(p, epoch = ownerEpoch.current) {
+    if (!active(epoch)) return;
     const responses = activeModels.map((m) => ({ model: m, text: results[ck(p.id, m)]?.text })).filter((r) => typeof r.text === "string");
     if (!responses.length) return;
     setGrades((prev) => ({ ...prev, [p.id]: { status: "running" } }));
     try {
-      const j = await api("/api/grade", { method: "POST", body: JSON.stringify({ grader, prompt: p.prompt, reference: p.reference || "", corpus, systemPrompt: system, responses }) });
+      const j = await api("/api/grade", { method: "POST", body: JSON.stringify({ grader, prompt: p.prompt, reference: p.reference || "", corpus, systemPrompt: system, responses, ...(exampleId ? { example_id: exampleId, prompt_id: p.id } : {}) }) }, epoch);
+      if (!active(epoch)) return;
       setGrades((prev) => ({ ...prev, [p.id]: { status: "done", ...j } }));
     } catch (e) {
+      if (!active(epoch) || e.name === 'AbortError') return;
       setGrades((prev) => ({ ...prev, [p.id]: { status: "error", error: e.message } }));
     }
   }
 
+  async function gradeSingle(p) {
+    if (!exampleId && !grader) return setNotice({ kind: 'error', text: 'Choose an available grader or try the prepared example.' });
+    if (busyRef.current) return; const epoch = ownerEpoch.current;
+    busyRef.current = true; setGrading(true);
+    try { await gradeRow(p, epoch); } finally { if (active(epoch)) { busyRef.current = false; setGrading(false); } }
+  }
   async function gradeAll() {
+    if (!exampleId && !grader) return setNotice({ kind: 'error', text: 'Choose an available grader or try the prepared example.' });
+    if (busyRef.current) return; const epoch = ownerEpoch.current;
     const targets = prompts.filter(rowDone);
     if (!targets.length) return setNotice({ kind: "error", text: "Run the prompts first; grading needs every model's answer for a row." });
-    setGrading(true);
-    let i = 0;
-    const worker = async () => { while (i < targets.length) { const p = targets[i++]; await gradeRow(p); } };
-    await Promise.all(Array.from({ length: Math.min(GRADE_CONCURRENCY, targets.length) }, worker));
-    setGrading(false);
+    setGrading(true); busyRef.current = true;
+    await runQueue(targets, GRADE_CONCURRENCY, p => gradeRow(p, epoch), () => active(epoch));
+    if (active(epoch)) { setGrading(false); busyRef.current = false; }
   }
 
   const summary = useMemo(() => {
@@ -194,98 +233,89 @@ export default function Page() {
   }, [activeModels, prompts, results, grades]);
 
   function exportJson() {
+    const epoch = ownerEpoch.current; if (!active(epoch)) return;
     download(`model-arena-${new Date().toISOString().slice(0, 19)}.json`, JSON.stringify({
       exportedAt: new Date().toISOString(), settings: { models: activeModels, system, corpusChars: corpus.length, placement, maxTokens, temperature, grader },
       prompts, results, grades, summary,
-    }, null, 2), "application/json");
+    }, null, 2), "application/json", epoch);
   }
   function exportCsv() {
+    const epoch = ownerEpoch.current; if (!active(epoch)) return;
     const rows = [["prompt_id", "prompt", "reference", "model", "status", "response", "latency_ms", "completion_tokens", "accuracy", "helpfulness", "format", "overall", "best", "grader_reason"]];
     for (const p of prompts) for (const m of activeModels) {
       const r = results[ck(p.id, m)] || {}; const g = grades[p.id]; const s = g?.status === "done" ? g.scores?.[m] : null;
       rows.push([p.id, p.prompt, p.reference || "", m, r.status || "", r.text || r.error || "", r.ms ?? "", r.usage?.completion_tokens ?? "", s?.accuracy ?? "", s?.helpfulness ?? "", s?.format ?? "", s?.overall ?? "", g?.best === m ? "yes" : "", s?.reason ?? ""]);
     }
-    download(`model-arena-${new Date().toISOString().slice(0, 19)}.csv`, rows.map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv");
+    download(`model-arena-${new Date().toISOString().slice(0, 19)}.csv`, rows.map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv", epoch);
   }
 
-  function onPromptFile(file) {
-    const reader = new FileReader();
-    reader.onload = () => { try { const list = parsePromptFile(String(reader.result)); setPrompts(list); setNotice({ kind: "info", text: `Loaded ${list.length} prompts.` }); } catch (e) { setNotice({ kind: "error", text: e.message }); } };
-    reader.readAsText(file);
+  function readFile(file, apply) {
+    const epoch = ownerEpoch.current; if (!active(epoch)) return;
+    if (file.size > LIMITS.fileBytes) return setNotice({ kind: 'error', text: 'Choose a file smaller than 2 MiB.' });
+    const reader = new FileReader(); readers.current.add(reader);
+    reader.onload = () => { if (!active(epoch)) return; try { apply(String(reader.result)); } catch (e) { setNotice({ kind: 'error', text: e.message }); } };
+    reader.onerror = () => { if (active(epoch)) setNotice({ kind: 'error', text: 'This file could not be read. Try a text or JSON file.' }); };
+    reader.onloadend = () => readers.current.delete(reader); reader.readAsText(file);
   }
-  function onCorpusFile(file) {
-    const reader = new FileReader();
-    reader.onload = () => { setCorpus(String(reader.result)); setNotice({ kind: "info", text: `Loaded ${file.name} (${String(reader.result).length.toLocaleString()} characters).` }); };
-    reader.readAsText(file);
-  }
+  function onPromptFile(file) { readFile(file, text => { const list = parsePromptFile(text); edit(); setPrompts(list); setResults({}); setGrades({}); setNotice({ kind: 'info', text: `Loaded ${list.length} prompts.${exampleId ? ' Run and Grade now use live providers.' : ''}` }); }); }
+  function onCorpusFile(file) { readFile(file, text => { if (text.length > LIMITS.corpus) throw new Error('The reference corpus is limited to 30,000 characters.'); edit(); setCorpus(text); setNotice({ kind: 'info', text: `Loaded ${file.name} (${text.length.toLocaleString()} characters).${exampleId ? ' Run and Grade now use live providers.' : ''}` }); }); }
 
   const corpusWarn = corpus.length > 12000;
-  const busy = running || grading;
+  const busy = running || grading || loadingExample;
 
   return (
     <div className="shell">
       <h2 className="sr-only">Model Arena: compare small Hugging Face models on your prompts and grade them with Gemini</h2>
-      <header className="top">
-        <div>
-          <h1>Model Arena</h1>
-          <p className="sub">Run up to three Hugging Face models on the same prompts, with your system prompt and reference corpus, then let Gemini grade them.</p>
-        </div>
-        <div className="status">
-          <span className={`badge ${config.hf ? "ok" : "bad"}`}>HF token {config.hf ? "set" : "missing"}</span>
-          <span className={`badge ${config.gemini ? "ok" : "bad"}`}>Gemini key {config.gemini ? "set" : "missing"}</span>
-          <span className={`badge ${config.needsKey ? "accent" : "warn"}`}>{config.needsKey ? "Access key on" : "No access key: anyone with the URL can spend your quota"}</span>
-        </div>
-      </header>
-
-      {!keyOk && (
-        <section className="card keycard" style={{ marginBottom: 16 }}>
-          <div className="cardhead"><h2>Access key</h2></div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input type="text" id="access-key" placeholder="Paste the APP_ACCESS_KEY set on the server" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} style={{ maxWidth: 420 }} />
-            <button className="btn primary" onClick={() => { setAccessKey(keyDraft.trim()); setKeyOk(true); }}>Unlock</button>
-          </div>
-        </section>
-      )}
+      <section className="workspace-intro">
+        <div><span className="eyebrow">Compare · inspect · decide</span><h1>Put your models to the test.</h1><p className="sub">Use the same prompts and reference. Compare each answer, then inspect Gemini’s independent scores.</p></div>
+        <button className="btn primary" onClick={loadExample} disabled={busy} aria-busy={loadingExample}><FlaskConical aria-hidden="true" />{loadingExample ? 'Loading example…' : 'Try with an example'}</button>
+      </section>
+      <div className="workspace-status">
+        <span className={`badge ${exampleId ? 'ok' : 'accent'}`}>{exampleId ? 'Prepared example · no provider calls' : config.providerMode === 'mock' ? 'Development mock · no provider calls' : 'Live comparison'}</span>
+        <span className="hint">{exampleId ? 'Run all → Grade all → compare the scores. Editing any input switches to live mode.' : config.providerMode === 'mock' ? 'Development fixtures replace provider responses. Prepared scores are illustrative.' : 'Run uses Hugging Face; Grade uses Gemini. Each selected prompt and model adds calls.'}</span>
+        {!exampleId && config.loaded && <span className="hint">{config.hf ? 'HF ready' : 'HF unavailable'} · {config.gemini ? 'Gemini ready' : 'Gemini unavailable'}</span>}
+      </div>
 
       <div className="layout">
         <aside className="side">
           <section className="card">
-            <div className="cardhead"><h2>Models</h2><button className="btn small" onClick={refreshModels} disabled={busy}>Refresh list</button></div>
-            <datalist id="model-list">{available.map((m) => <option key={m.id} value={m.id} />)}</datalist>
+            <div className="cardhead"><h2>Models</h2><button className="btn small" onClick={refreshModels} disabled={busy}><RefreshCw aria-hidden="true" />Refresh list</button></div>
+            <datalist id="model-list">{available.map((m) => <option key={m.id} value={m.id} label={m.funded ? `Priced route · ${m.routeProvider}` : "Price unverified · unavailable for included allowance"} />)}</datalist>
             {models.map((m, i) => (
               <div className="slot" key={i}>
-                <input type="text" id={`model-${i}`} list="model-list" className="mono" placeholder={i === 0 ? "org/model-id from Hugging Face" : "optional"} value={m}
-                  onChange={(e) => setModels((prev) => prev.map((x, k) => (k === i ? e.target.value : x)))} disabled={busy} />
-                <button className="btn small" title="Clear" onClick={() => setModels((prev) => prev.map((x, k) => (k === i ? "" : x)))} disabled={busy}>×</button>
+                <input type="text" id={`model-${i}`} aria-label={`Model ${i + 1}`} maxLength={160} list="model-list" className="mono" placeholder={i === 0 ? "org/model-id from Hugging Face" : "optional"} value={m}
+                  onChange={(e) => { edit(); setModels((prev) => prev.map((x, k) => (k === i ? e.target.value : x))); }} disabled={busy} />
+                <button className="btn small icon" aria-label={`Clear model ${i + 1}`} onClick={() => { edit(); setModels((prev) => prev.map((x, k) => (k === i ? "" : x))); }} disabled={busy}><X aria-hidden="true" /></button>
               </div>
             ))}
-            <p className="hint" style={{ margin: "6px 0" }}>Suggested small instruct models available on the router right now:</p>
+            <p className="hint" style={{ margin: "6px 0" }}>Small instruct models with a current verified route price:</p>
             <div className="chips">
               {smallModels.length ? smallModels.slice(0, 14).map((id) => (
-                <button key={id} className="chip" disabled={busy} onClick={() => setModels((prev) => { if (prev.includes(id)) return prev; const k = prev.findIndex((x) => !x.trim()); if (k < 0) return prev; return prev.map((x, j) => (j === k ? id : x)); })}>{id.split("/").pop()}</button>
-              )) : <span className="count">{available.length ? "none flagged small" : "loading…"}</span>}
+                <button key={id} className="chip" disabled={busy} onClick={() => { edit(); setModels((prev) => { if (prev.includes(id)) return prev; const k = prev.findIndex((x) => !x.trim()); if (k < 0) return prev; return prev.map((x, j) => (j === k ? id : x)); }); }}>{id.split("/").pop()}</button>
+              )) : <span className="count">{available.length ? "no priced small models" : "loading…"}</span>}
             </div>
-            <p className="count" style={{ marginTop: 8 }}>{available.length} models on the Hugging Face router</p>
+            <p className="count" style={{ marginTop: 8 }}>{available.filter(m => m.funded).length} priced routes · {available.length} catalog models</p>
+            <p className="hint">Only routes with a verified price can use the included allowance. You can still enter a model ID manually.</p>
           </section>
 
           <section className="card">
-            <div className="cardhead"><h2>System prompt</h2><button className="btn small" onClick={() => setSystem(DEFAULT_SYSTEM)} disabled={busy}>Reset</button></div>
-            <textarea id="system-prompt" rows={5} value={system} onChange={(e) => setSystem(e.target.value)} disabled={busy} />
+            <div className="cardhead"><h2>System prompt</h2><button className="btn small" onClick={() => { edit(); setSystem(DEFAULT_SYSTEM); }} disabled={busy}>Reset</button></div>
+            <textarea id="system-prompt" aria-label="System prompt" maxLength={LIMITS.system} rows={5} value={system} onChange={(e) => { edit(); setSystem(e.target.value); }} disabled={busy} />
           </section>
 
           <section className="card">
             <div className="cardhead"><h2>Reference corpus</h2>
               <div className="actions">
                 <label className="btn small filelabel">Upload .txt / .md / .json<input type="file" accept=".txt,.md,.json,.csv" onChange={(e) => e.target.files?.[0] && onCorpusFile(e.target.files[0])} disabled={busy} /></label>
-                <button className="btn small" onClick={() => setCorpus("")} disabled={busy || !corpus}>Clear</button>
+                <button className="btn small" onClick={() => { edit(); setCorpus(""); }} disabled={busy || !corpus}>Clear</button>
               </div>
             </div>
-            <textarea id="corpus" rows={7} className="mono" placeholder="Paste the text the models must answer from. Leave empty for closed-book answers." value={corpus} onChange={(e) => setCorpus(e.target.value)} disabled={busy} />
+            <textarea id="corpus" aria-label="Reference corpus" maxLength={LIMITS.corpus} rows={7} className="mono" placeholder="Paste the text the models must answer from. Leave empty for closed-book answers." value={corpus} onChange={(e) => { edit(); setCorpus(e.target.value); }} disabled={busy} />
             <div className="field" style={{ marginTop: 8 }}>
               <label>Where it goes <span className="count">{corpus.length.toLocaleString()} chars ≈ {Math.round(corpus.length / 4).toLocaleString()} tokens</span></label>
               <div className="radios">
-                <label><input type="radio" name="placement" checked={placement === "user"} onChange={() => setPlacement("user")} disabled={busy} /> user message, as a supplied reference</label>
-                <label><input type="radio" name="placement" checked={placement === "system"} onChange={() => setPlacement("system")} disabled={busy} /> appended to the system prompt</label>
+                <label><input type="radio" name="placement" checked={placement === "user"} onChange={() => { edit(); setPlacement("user"); }} disabled={busy} /> user message, as a supplied reference</label>
+                <label><input type="radio" name="placement" checked={placement === "system"} onChange={() => { edit(); setPlacement("system"); }} disabled={busy} /> appended to the system prompt</label>
               </div>
               {corpusWarn && <span className="hint" style={{ color: "var(--warn)" }}>Large corpus: every call sends all of it, and the grader reads up to 30,000 characters of it.</span>}
             </div>
@@ -293,14 +323,14 @@ export default function Page() {
 
           <section className="card">
             <div className="cardhead"><h2>Decoding</h2></div>
-            <div className="field"><label>Max new tokens <span className="count">{maxTokens}</span></label><input type="range" id="max-tokens" min="32" max="1024" step="16" value={maxTokens} onChange={(e) => setMaxTokens(+e.target.value)} disabled={busy} /></div>
-            <div className="field"><label>Temperature <span className="count">{temperature.toFixed(1)}</span></label><input type="range" id="temperature" min="0" max="1.5" step="0.1" value={temperature} onChange={(e) => setTemperature(+e.target.value)} disabled={busy} /><span className="hint">0 is greedy and repeatable; use it for comparisons.</span></div>
+            <div className="field"><label htmlFor="max-tokens">Max new tokens <span className="count">{maxTokens}</span></label><input type="range" id="max-tokens" min="32" max="1024" step="1" value={maxTokens} onChange={(e) => { edit(); setMaxTokens(+e.target.value); }} disabled={busy} /></div>
+            <div className="field"><label htmlFor="temperature">Temperature <span className="count">{temperature.toFixed(1)}</span></label><input type="range" id="temperature" min="0" max="1.5" step="0.1" value={temperature} onChange={(e) => { edit(); setTemperature(+e.target.value); }} disabled={busy} /><span className="hint">Lower temperature reduces variation; identical responses are not guaranteed.</span></div>
           </section>
 
           <section className="card">
             <div className="cardhead"><h2>Grader</h2></div>
-            <div className="field"><label>Gemini model</label>
-              <select id="grader" value={grader} onChange={(e) => setGrader(e.target.value)} disabled={busy}>{graders.map((g) => <option key={g} value={g}>{g}</option>)}</select>
+            <div className="field"><label htmlFor="grader">Gemini model</label>
+              <select id="grader" value={grader} onChange={(e) => { edit({ gradesOnly: true }); setGrader(e.target.value); }} disabled={busy}>{!grader && <option value="">Waiting for available graders…</option>}{[...new Set([grader, ...graders])].filter(Boolean).map((g) => <option key={g} value={g}>{g}</option>)}</select>
               <span className="hint">Scores accuracy, helpfulness and format from 1 to 10, then names the best. Answers are shuffled and anonymised before grading.</span>
             </div>
           </section>
@@ -310,10 +340,10 @@ export default function Page() {
           <section className="card">
             <div className="cardhead"><h2>Prompts <span className="count">{prompts.length}</span></h2>
               <div className="actions">
-                <button className="btn small" onClick={() => setPrompts((p) => [...p, { id: uid(), prompt: "", reference: "" }])} disabled={busy}>Add prompt</button>
+                <button className="btn small" onClick={() => { const id = uid(); edit({ promptId: id }); setPrompts((p) => [...p, { id, prompt: "", reference: "" }]); }} disabled={busy || prompts.length >= LIMITS.prompts}><Plus aria-hidden="true" />Add prompt</button>
                 <label className="btn small filelabel">Upload JSON<input type="file" accept=".json" onChange={(e) => e.target.files?.[0] && onPromptFile(e.target.files[0])} disabled={busy} /></label>
-                <button className="btn small" onClick={() => setPrompts(SAMPLE_PROMPTS.map((p) => ({ id: uid(), ...p })))} disabled={busy}>Load samples</button>
-                <button className="btn small danger" onClick={() => { setPrompts([]); setResults({}); setGrades({}); }} disabled={busy}>Clear all</button>
+                <button className="btn small" onClick={() => { edit(); setPrompts(SAMPLE_PROMPTS.map((p, i) => ({ id: `sample-${i + 1}`, ...p }))); setResults({}); setGrades({}); }} disabled={busy}>Load samples</button>
+                <button className="btn small danger" onClick={() => { edit(); setPrompts([]); setResults({}); setGrades({}); }} disabled={busy}>Clear all</button>
               </div>
             </div>
             {prompts.length === 0 && <p className="empty-state">No prompts yet. Add one, load the samples, or upload a JSON file: an array of strings, or objects with prompt and optional reference fields.</p>}
@@ -321,10 +351,10 @@ export default function Page() {
               <div className="promptrow" key={p.id}>
                 <span className="idx">{i + 1}</span>
                 <div>
-                  <textarea id={`prompt-${p.id}`} placeholder="Prompt" value={p.prompt} onChange={(e) => setPrompts((prev) => prev.map((x) => (x.id === p.id ? { ...x, prompt: e.target.value } : x)))} disabled={busy} />
-                  <input type="text" className="ref" id={`ref-${p.id}`} placeholder="Reference answer for the grader (optional)" value={p.reference || ""} onChange={(e) => setPrompts((prev) => prev.map((x) => (x.id === p.id ? { ...x, reference: e.target.value } : x)))} disabled={busy} />
+                  <textarea id={`prompt-${p.id}`} aria-label={`Prompt ${i + 1}`} maxLength={LIMITS.prompt} placeholder="Prompt" value={p.prompt} onChange={(e) => { edit({ promptId: p.id }); setPrompts((prev) => prev.map((x) => (x.id === p.id ? { ...x, prompt: e.target.value } : x))); }} disabled={busy} />
+                  <input type="text" className="ref" id={`ref-${p.id}`} aria-label={`Reference answer ${i + 1}`} maxLength={LIMITS.reference} placeholder="Reference answer for the grader (optional)" value={p.reference || ""} onChange={(e) => { edit({ promptId: p.id, gradesOnly: true }); setPrompts((prev) => prev.map((x) => (x.id === p.id ? { ...x, reference: e.target.value } : x))); }} disabled={busy} />
                 </div>
-                <button className="btn small" title="Remove" onClick={() => { setPrompts((prev) => prev.filter((x) => x.id !== p.id)); }} disabled={busy}>×</button>
+                <button className="btn small icon" aria-label={`Remove prompt ${i + 1}`} onClick={() => { edit({ promptId: p.id }); setPrompts((prev) => prev.filter((x) => x.id !== p.id)); }} disabled={busy}><X aria-hidden="true" /></button>
               </div>
             ))}
           </section>
@@ -332,16 +362,16 @@ export default function Page() {
           <section className="card">
             <div className="cardhead"><h2>Results</h2>
               <div className="actions">
-                <button className="btn primary" onClick={() => runAll()} disabled={busy}>{running ? "Running…" : "Run all"}</button>
-                {running && <button className="btn" onClick={() => { stopRef.current = true; }}>Stop after current</button>}
+                <button className="btn primary" onClick={() => runAll()} disabled={busy}><Play aria-hidden="true" />{running ? "Running…" : "Run all"}</button>
+                {running && <button className="btn" onClick={() => { stopRef.current = true; }}><Square aria-hidden="true" />Stop after current</button>}
                 <button className="btn" onClick={gradeAll} disabled={busy}>{grading ? "Grading…" : "Grade all"}</button>
-                <button className="btn" onClick={exportJson} disabled={!Object.keys(results).length}>Export JSON</button>
-                <button className="btn" onClick={exportCsv} disabled={!Object.keys(results).length}>Export CSV</button>
-                <button className="btn danger" onClick={() => { setResults({}); setGrades({}); }} disabled={busy || !Object.keys(results).length}>Clear results</button>
+                <button className="btn" onClick={exportJson} disabled={!Object.keys(results).length}><Download aria-hidden="true" />Export JSON</button>
+                <button className="btn" onClick={exportCsv} disabled={!Object.keys(results).length}><Download aria-hidden="true" />Export CSV</button>
+                <button className="btn danger" onClick={() => { setResults({}); setGrades({}); }} disabled={busy || !Object.keys(results).length}><Trash2 aria-hidden="true" />Clear results</button>
               </div>
             </div>
             {!activeModels.length ? <p className="empty-state">Pick at least one model on the left.</p> : (
-              <div className="tablewrap">
+              <div className="tablewrap" tabIndex={0} aria-label="Side-by-side model answers">
                 <table className="results">
                   <thead><tr><th className="pcol">Prompt</th>{activeModels.map((m) => <th key={m}><span className="mono">{m}</span></th>)}</tr></thead>
                   <tbody>
@@ -352,10 +382,10 @@ export default function Page() {
                           <td className="pcol"><div className="pcell">{p.prompt}{p.reference ? <div className="ref">Reference: {p.reference}</div> : null}
                             <div className="rowbtns">
                               <button className="btn small" onClick={() => runAll(p.id)} disabled={busy}>Run</button>
-                              <button className="btn small" onClick={() => gradeRow(p)} disabled={busy || !rowDone(p)}>Grade</button>
+                              <button className="btn small" onClick={() => gradeSingle(p)} disabled={busy || !rowDone(p)}>Grade</button>
                               {g?.status === "running" && <span className="badge accent">grading…</span>}
                               {g?.status === "error" && <span className="badge bad" title={g.error}>grader error</span>}
-                              {g?.status === "done" && <span className="badge ok">graded by {g.grader}</span>}
+                              {g?.status === "done" && <span className="badge ok">{g.cached ? "Prepared grade · no provider" : `graded by ${g.grader}`}</span>}
                             </div>
                           </div></td>
                           {activeModels.map((m) => {
@@ -364,6 +394,8 @@ export default function Page() {
                               <td key={m}><div className="cell">
                                 <div className="meta">
                                   {!r && <span className="badge">not run</span>}
+                                  {r?.status === "stopped" && <span className="badge">stopped before dispatch</span>}
+                                  {r?.cached && <span className="badge">Prepared answer · no provider</span>}
                                   {r?.status === "queued" && <span className="badge">queued</span>}
                                   {r?.status === "running" && <span className="badge accent">running…</span>}
                                   {r?.status === "error" && <span className="badge bad">error</span>}
@@ -389,18 +421,18 @@ export default function Page() {
           <section className="card">
             <div className="cardhead"><h2>Summary</h2><span className="count">averages over graded prompts</span></div>
             {!activeModels.length ? <p className="empty-state">Nothing to summarise yet.</p> : (
-              <table className="summary">
+              <div className="tablewrap" tabIndex={0} aria-label="Model score summary"><table className="summary">
                 <thead><tr><th>model</th><th className="n">graded</th><th className="n">accuracy</th><th className="n">helpfulness</th><th className="n">format</th><th className="n">overall</th><th className="n">wins</th><th className="n">errors</th><th className="n">avg latency</th></tr></thead>
                 <tbody>{summary.map((s) => (
                   <tr key={s.model}><td className="mono">{s.model}</td><td className="n">{s.graded}</td><td className="n">{s.accuracy}</td><td className="n">{s.helpfulness}</td><td className="n">{s.format}</td><td className="n">{s.overall}</td><td className="n">{s.wins}</td><td className="n">{s.errors}</td><td className="n">{s.avgMs != null ? fmtMs(s.avgMs) : "–"}</td></tr>
                 ))}</tbody>
-              </table>
+              </table></div>
             )}
           </section>
         </main>
       </div>
 
-      {notice && <div className={`toast ${notice.kind === "error" ? "error" : ""}`}>{notice.text}</div>}
+      {notice && <div role={notice.kind === "error" ? "alert" : "status"} className={`toast ${notice.kind === "error" ? "error" : ""}`}>{notice.text}</div>}
     </div>
   );
 }

@@ -1,19 +1,20 @@
 # Model Arena
 
-Compare up to three small Hugging Face models on the same prompts, with your own system prompt and an optional reference corpus, then have Gemini grade every answer. Built for exploring which small model fits a task before paying for a large one.
+Compare up to three Hugging Face models on the same prompts and reference material, then inspect Gemini’s independent scores. Model Arena keeps the original side-by-side workflow: individual or batch runs, stop after current calls, anonymized grading, per-model averages, and JSON/CSV exports.
 
-## What it does
+**Live on AWS:** [Model Arena](https://model-arena.3-6-183-210.sslip.io). Email/password accounts, the prepared comparison workflow and one paid Hugging Face generation are verified. The app is running in ordinary live mode; the unchanged prepared example stays free.
 
-- **Models**: pick up to three model ids served by the Hugging Face Inference router. The list is fetched live and small instruct models are suggested.
-- **System prompt and corpus**: edit the system prompt; paste or upload a reference corpus and choose whether it goes into the user message as a supplied reference or is appended to the system prompt.
-- **Prompts**: add prompts by hand, load samples, or upload a JSON file. Each prompt may carry a reference answer for the grader.
-- **Run**: every prompt goes to every selected model with identical settings, three calls at a time, with automatic retries on rate limits.
-- **Grade**: a Gemini model scores each answer 1 to 10 on accuracy, helpfulness and format, names the best answer, and gives a one-sentence reason. Answers are shuffled and anonymised before grading.
-- **Summary and export**: per-model averages and wins; export everything as JSON or CSV. Settings and results persist in the browser.
+## Try it in three steps
 
-## Prompt file format
+1. Open the app and create an email/password account. Your comparisons are saved in this browser under your account.
+2. Choose **Try with an example**, then **Run all** and **Grade all**. The movie example uses prepared answers and illustrative scores; these actions make no provider calls while the example remains unchanged.
+3. Inspect each answer, score and reason, compare the summary, and export JSON or CSV. Editing the example switches to a live comparison and clears affected results or grades.
 
-Either an array of strings, or an array of objects:
+The prepared prompts cover a subjective Avengers-film choice, a romantic-film recommendation with three reasons and one caveat, and the director of Inception with a reference answer. Prepared scores are a workflow demonstration, not a model benchmark.
+
+## Use your own inputs
+
+Choose up to three model IDs, edit the system prompt and optionally paste or upload a reference corpus. The corpus can be sent in the user message or appended to the system prompt. Add prompts by hand, load the original samples, or upload JSON. Each prompt may include a reference answer for grading.
 
 ```json
 [
@@ -22,35 +23,34 @@ Either an array of strings, or an array of objects:
 ]
 ```
 
-Accepted field names: `prompt`, `question`, `input`, `text` for the prompt; `reference`, `reference_answer`, `answer`, `expected` for the reference.
+String arrays and an object containing a `prompts` array are also accepted. Prompt aliases are `question`, `input`, `text` and `user`; reference aliases are `reference_answer`, `answer` and `expected`. IDs must be unique.
 
-## Setup
+Limits are 30 prompts, 8,000 characters per prompt/reference, 20,000 for the system prompt, 30,000 for the corpus and 2 MiB per imported file. Imports remain in browser memory/account-scoped browser storage; they are not uploaded to an object store. Running or grading sends the relevant text to the selected providers.
+
+## Live comparisons and limits
+
+Live **Run** sends every selected prompt to each selected HF model; **Grade** makes a separate Gemini call per complete row. These are paid operations within the included allowance. Suggestions show small models with current verified route prices. Unknown-price routes fail closed; a listed model is not a guarantee of provider availability or account funding. The ordinary grader is selected from the server’s available, priced catalog.
+
+Answers are shuffled and anonymized before grading. Accuracy, helpfulness and format are each scored from 1 to 10. These are model judgments, not proof of factual correctness. Lower temperature reduces variation but does not guarantee identical output. Stopping prevents new queued generation calls; already-dispatched calls may still complete.
+
+Browser state is separated by verified account ID and clears from the active screen on sign-out or account change. The legacy global workspace is not imported into any account. Its retired shared access key is removed without adopting the unowned prompts/results. Comparisons are not synchronized across devices; export before clearing browser data or using a shared device. Email verification, Google sign-in and email password recovery are not configured. There is no generated-media pipeline.
+
+## Verification scope
+
+On 1 October 2026, live checks passed account isolation, CSRF, session revocation, six prepared answers, three illustrative grades and preserved user records over verified PostgreSQL TLS. Browser review covered sign-in, example Run/Grade, summary, reload, theme switching and export buttons. The identical local production build also passed 390px layout and same-browser account switching.
+
+One controlled normal generation used `Qwen/Qwen3-4B-Instruct-2507:nscale`, a 64-token cap and temperature 0. It answered the Inception director question with “Christopher Nolan”: one HTTP 200, one provider dispatch and one completed usage row, with 19 input and 3 output tokens. Estimated cost was **USD 0.00000028**, based on the selected route’s published catalog rates, not an invoice. No cache or reasoning tokens were reported. Gemini grading was verified with prepared/mock responses; no paid Gemini grade or full paid comparison matrix was run. These checks demonstrate workflow and accounting, not model benchmark quality.
+
+## Development and deployment
+
+Use Node 24 and `npm ci`. Local integration requires a separate PostgreSQL database even in mock mode; authentication is not bypassed. Configure private environment values using the server settings in [deployment notes](docs/PORTFOLIO-DEPLOYMENT.md), with provider keys absent and `MODEL_ARENA_MOCK_MODE=1` during development.
 
 ```bash
-npm install
-cp .env.example .env.local   # then fill in the values
-npm run dev
+npm ci
+npm run test:client
+MODEL_ARENA_DIST_DIR=.next-integrated npm run build
 ```
 
-Environment variables, all server-side:
+The separate build directory preserves an accepted baseline preview. Run backend tests only with their isolated fixture environment; never point tests at the production database. The historical Vercel script is not the AWS deployment workflow.
 
-| Variable | Purpose |
-|---|---|
-| `HF_TOKEN` | Hugging Face token with Inference Providers access |
-| `GEMINI_API_KEY` | Google AI Studio key for the grader |
-| `APP_ACCESS_KEY` | Optional. If set, the page asks for it once and sends it as a header on every API call. Set it on any public deployment, or anyone with the URL can spend your quota. |
-
-## Deploy to Vercel
-
-```bash
-npx vercel env add HF_TOKEN production
-npx vercel env add GEMINI_API_KEY production
-npx vercel env add APP_ACCESS_KEY production
-npx vercel --prod
-```
-
-## Notes
-
-- Model availability and speed depend on the provider behind each id on the router; a 429 "model busy" is retried four times with backoff.
-- Grading costs Gemini tokens: the grader reads the system prompt, up to 30,000 characters of the corpus, the prompt, the reference and every answer.
-- Temperature 0 makes runs repeatable, which is what you want when comparing models.
+See [the launch review](docs/FMEA-PORTFOLIO.md) for current verification scope and limitations. No real provider call is part of an ordinary development test.
