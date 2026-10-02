@@ -1410,13 +1410,13 @@
       "scenario": "Production accidentally runs mock provider mode",
       "severity": 8,
       "occurrence": 2,
-      "detection": 5,
-      "rpn": 80,
+      "detection": 2,
+      "rpn": 32,
       "priority": "P2",
-      "status": "residual_risk",
-      "evidence_method": "not_run",
-      "evidence": "lib/catalog.js: MODEL_ARENA_MOCK_MODE; deployment review pending",
-      "action_or_limit": "Runtime indicator exposes mock; deployment env still must be independently verified."
+      "status": "controlled",
+      "evidence_method": "source_inspection",
+      "evidence": "docs/qa/2026-10-02/aws-release.json: root runtime verification generated_at 2026-10-02T07:06:40.788537+00:00, mock=false/auth=true",
+      "action_or_limit": "This release was verified on 2026-10-02 with mock=false and auth=true; environment/config/mount/network bounds were preserved. Recheck runtime flags on every later deployment; this is release evidence, not permanent prevention of operator drift."
     },
     {
       "id": "ARENA-102",

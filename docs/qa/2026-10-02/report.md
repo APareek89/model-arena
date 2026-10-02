@@ -30,13 +30,15 @@ Google's public v1beta discovery document uses uppercase legacy type enums and e
 
 `fmea.csv` and `fmea.json` enumerate **122 distinct possible failure scenarios across all 12 categories**. They are not 122 observed defects. Each row contains S/O/D, RPN, priority, status, evidence method, code/test anchor and action/remaining limit. Fixed rows retain pre-mitigation scoring; controlled/risk rows describe current controls. Source inspection and scenario simulation do not establish production behavior.
 
+Current status counts: **18 addressed scenario rows, 95 controlled, 5 residual risks, 2 product limits, 1 historical diagnostic limit and 1 unverified load case**. Evidence methods: 72 automated, 39 source inspections, 6 scenario simulations and 5 not run. These are scenario/evidence classifications, not counts of unique defects or proof that every scenario was executed. ARENA-101 is now controlled for this release because the AWS receipt confirms `mock:false` and `auth:true` on 2026-10-02; future deployments still require that check.
+
 - `backend-tests.txt`: actual Node tests, including real isolated PostgreSQL owner/budget checks, intercepted provider transports, validation, timeout/refusal/truncation errors, and official Gemini schema conformance. See its final test count.
 - `client-tests.txt`: actual Node client-state/import/CSV/key-selection/queue tests. See its final count.
 - `http-results.json`: 37 normal local HTTP checks using signup, sign-in, cookie sessions and CSRF, including 24 comparisons through the three actual grader adapters. Provider wires are intercepted by a transport that denies external sockets/DNS. These are route proofs, not just mocks of `grade()`.
 - `tests/fixtures/session-proxy.json`: eight independently judged cases from the active Codex session, covering 18 answers: factual correctness, subjective choice, requested format, missing corpus evidence, injected instructions, empty answers, Hindi and ties. The same judgments flow through all three providers' output formats. This verifies wire/schema/anonymous-label mapping; it **does not** measure real Gemini/OpenAI/Claude judging quality.
 - `tests/fixtures/gemini-schema-contract.json`: dated public documentation excerpt; strict recursive schema checks use it.
 - `build.txt`: isolated production build receipt, including Next's compilation/type-validity checks. This JS project has no separate TypeScript checker.
-- Root owns browser screenshots and independently checks desktop/mobile, keyboard tabs, persisted answers, key lifetime and readable failure/retry flows. Those receipts are external to this worker's automated proof unless copied into this folder later.
+- `browser-qa.json` and `screenshots/`: committed root browser evidence at 1280px and 390px, covering all three provider configurations, provider-change/reload key clearing with answers retained, the readable401 error/support reference, no mobile document overflow, and light/dark contrast. All four screenshot hashes were verified against the receipt. These checks use intercepted provider transport, not real model calls.
 
 Run free checks:
 
@@ -65,4 +67,4 @@ No paid calls, deployment, commit or push were performed by this worker. Real cr
 
 ## Root release verification
 
-Root completed desktop/mobile and light/dark browser review; see `browser-qa.json` and its screenshot hashes. The tested code was deployed using a reversible image-only AWS update. Existing environment and runtime boundaries were identical before/after, and the usage ledger stayed at 25 rows. See `aws-release.json`. No paid acceptance was run; the explicit user confirmation boundary remains.
+Runtime checkpoint `8d96f62` is both the local HEAD and origin/main at this read-only release review. Root completed desktop/mobile and light/dark browser review; see `browser-qa.json` and its screenshot hashes. The tested code was deployed using a reversible image-only AWS update. Existing environment and runtime boundaries were identical before/after, and the usage ledger stayed at 25 rows. See `aws-release.json`. No paid acceptance was run; the explicit user confirmation boundary remains.
