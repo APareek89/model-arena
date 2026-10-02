@@ -1,0 +1,39 @@
+
+> model-arena@0.1.0 build
+> next build
+
+   ▲ Next.js 15.5.25
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 947ms
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/4) ...
+   Generating static pages (1/4)
+   Generating static pages (2/4)
+   Generating static pages (3/4)
+ ✓ Generating static pages (4/4)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                 Size  First Load JS
+┌ ○ /                                    15.3 kB         118 kB
+├ ○ /_not-found                            992 B         104 kB
+├ ƒ /api/auth/[...nextauth]                147 B         103 kB
+├ ƒ /api/auth/signup                       147 B         103 kB
+├ ƒ /api/config                            147 B         103 kB
+├ ƒ /api/example                           147 B         103 kB
+├ ƒ /api/generate                          147 B         103 kB
+├ ƒ /api/grade                             147 B         103 kB
+├ ƒ /api/grader-models                     147 B         103 kB
+├ ƒ /api/healthz                           147 B         103 kB
+├ ƒ /api/models                            147 B         103 kB
+└ ƒ /api/session                           147 B         103 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/255-37e0f0325134c4d7.js       46.4 kB
+  ├ chunks/4bd1b696-c023c6e3521b1417.js  54.2 kB
+  └ other shared chunks (total)           1.9 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand

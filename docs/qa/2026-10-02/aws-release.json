@@ -1,0 +1,36 @@
+{
+  "status": "image_only_update_verified",
+  "app": "model-arena",
+  "image_id": "sha256:d70842ed056eddc32332f2f94799387aad76acbed6907897af56f32b1e95fc90",
+  "previous_image_id": "sha256:83cd4284466737f5b23e35b747d10cc50e54b3bd27236b2273c43ee77de16a60",
+  "source_sha256": "cd481a764bbc8350d181fd6c24453f4c8eaf34b3fe039aba5af4bb2b9f700876",
+  "config_before_sha256": "fafcb0528975795c42d798c46ddd586ac93e96345f96c553c77750a2d23c47da",
+  "config_after_sha256": "2b649093f7400f7b81f34d6267305cc8c24eae89ee6379e5e3be930efcc87d28",
+  "environment_sha256": "ad6140cf03868328357efc135ca970f318cbb30f86cffeb27bf11742bd4683da",
+  "config_preserved_except_image": true,
+  "environment_identical": true,
+  "mounts_commands_network_bounds_identical": true,
+  "other_apps_unchanged": true,
+  "auth": true,
+  "mock": false,
+  "database_before": {
+    "database": "model_arena",
+    "role": "model_arena",
+    "ca_verified": true,
+    "tls": "TLSv1.3",
+    "read_only": true,
+    "active_reservations": 0,
+    "usage_rows": 25
+  },
+  "database_after": {
+    "database": "model_arena",
+    "role": "model_arena",
+    "ca_verified": true,
+    "tls": "TLSv1.3",
+    "read_only": true,
+    "active_reservations": 0,
+    "usage_rows": 25
+  },
+  "provider_calls_by_operator": 0,
+  "generated_at": "2026-10-02T07:06:40.788537+00:00"
+}

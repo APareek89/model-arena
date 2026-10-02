@@ -1,0 +1,41 @@
+
+> model-arena@0.1.0 test:client
+> node --test client-tests/*.test.mjs
+
+✔ old-owner 401 cannot expire the next account; same-owner refresh keeps valid requests (8.630416ms)
+✔ current-owner 401 expires once; A→out→A invalidates old operations (0.7075ms)
+✔ identity change during JSON body parsing blocks old response and imported/export callback epoch (0.140041ms)
+✔ app mutation uses reusable session CSRF and retains abort signal (0.260458ms)
+✔ three-worker queue stops scheduling on account change but lets in-flight calls settle (0.288875ms)
+✔ NextAuth v5 requests return-redirect JSON and rejects bad credentials/HTML masquerading as success (0.502625ms)
+✔ owner namespaced storage does not import legacy records and strips only legacy access key (0.154209ms)
+✔ prompt imports preserve aliases/references and reject duplicates or oversized sets (0.449209ms)
+✔ saved blank drafts persist and interrupted jobs do not falsely resume (0.221333ms)
+✔ CSV neutralizes spreadsheet formulas while retaining quotes and multiline text (0.135167ms)
+✔ editing one prompt invalidates only that row; reference/grader edits invalidate grades only (0.1045ms)
+✔ a delayed failed session refresh cannot invalidate a newer login (0.127917ms)
+✔ Configure gemini allows listed models and requires key (0.48075ms)
+✔ Configure openai allows listed models and requires key (0.054917ms)
+✔ Configure claude allows listed models and requires key (0.039125ms)
+✔ generation truncation has an explicit partial-answer explanation (0.064167ms)
+✔ prompt import rejects objectPrompt rather than coercing or colliding (0.180458ms)
+✔ prompt import rejects numericPrompt rather than coercing or colliding (0.038833ms)
+✔ prompt import rejects objectReference rather than coercing or colliding (0.038292ms)
+✔ prompt import rejects numericID rather than coercing or colliding (0.03375ms)
+✔ prompt import rejects delimiterID rather than coercing or colliding (0.049542ms)
+✔ prompt import rejects controlID rather than coercing or colliding (0.080208ms)
+✔ prompt import rejects oversized UTF8 files before JSON parsing (1.030125ms)
+✔ maximum90-job batch stays at3workers and completes every item once (36.046417ms)
+✔ numeric reference values are not silently coerced (0.119917ms)
+✔ competing FileReader completions apply only the latest selection per input kind (0.097042ms)
+✔ workspace invalidation blocks both pending imports and permits a fresh selection (0.049833ms)
+✔ persisted object children and malformed scores become recoverable errors instead of React crashes (0.354333ms)
+✔ valid persisted grades recompute numeric overall and retain unknown BYOK cost (0.119833ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 70.941125

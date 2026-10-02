@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-02",
+  "method": "Codex in-app browser, local normal-auth server with actual adapters and denied external DNS/sockets; literal synthetic provider key only",
+  "real_provider_calls": 0,
+  "widths": [
+    1280,
+    390
+  ],
+  "checks": {
+    "configure_three_provider_success": true,
+    "provider_change_clears_key_preserves_answers": true,
+    "reload_clears_key_preserves_workspace": true,
+    "401_preserves_answers_shows_support_reference": true,
+    "error_outside_horizontal_table": true,
+    "mobile_document_width_equals_viewport": true,
+    "mobile_error_panel_width": 324,
+    "mobile_error_panel_scroll_width": 321,
+    "dark_error_contrast_visually_checked": true,
+    "light_error_contrast_visually_checked": true
+  },
+  "limits": [
+    "Synthetic answer/grade content validates control flow and UI, not provider quality.",
+    "The UI live-comparison label refers to the actual adapter code path; all provider transport in this fixture was intercepted."
+  ],
+  "screenshots": [
+    {
+      "path": "screenshots/arena-configure-desktop.png",
+      "sha256": "f5d7a3b65c176871ede93f1b361b2a78cbf19c06eb7296a94bbcacb78be5a380"
+    },
+    {
+      "path": "screenshots/arena-configure-mobile.png",
+      "sha256": "b52f54e2b114e3a969e699ceaf9027ecbb072fe6fb49e11f11f631b5d6c7a420"
+    },
+    {
+      "path": "screenshots/arena-grader-error-after-desktop.png",
+      "sha256": "ffe942e9ae48fee5a030058430180eca7129c6127d98b6ec10c66cbcc297b93a"
+    },
+    {
+      "path": "screenshots/arena-grader-error-after-mobile.png",
+      "sha256": "6212e4d162d4bc55fe242a6a26da115cad59ca4ee493a7c7a9c9253452727a98"
+    }
+  ]
+}

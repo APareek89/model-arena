@@ -1,0 +1,194 @@
+{
+  "at": "2026-10-02T06:59:44.563Z",
+  "origin": "http://127.0.0.1:8995",
+  "providerCalls": 0,
+  "mode": "local HTTP with normal signup/session/CSRF and external-network-denying transport",
+  "checks": [
+    {
+      "name": "normal signup",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "normal sign in",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "config uses user-key mode",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "public preset catalog has three providers without provider dispatch",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "unauthenticated grade rejected",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "wrong CSRF rejected before grading",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "wrong Origin rejected before grading",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "missing key is actionable400",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "malformed request JSON rejected",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy reference-fact",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy subjective-choice",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy requested-format",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy grounded-missing",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy answer-injection",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy empty-answers",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy unicode-reference",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "gemini HTTP session-proxy equal-quality-tie",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy reference-fact",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy subjective-choice",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy requested-format",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy grounded-missing",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy answer-injection",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy empty-answers",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy unicode-reference",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "openai HTTP session-proxy equal-quality-tie",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy reference-fact",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy subjective-choice",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy requested-format",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy grounded-missing",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy answer-injection",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy empty-answers",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy unicode-reference",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "claude HTTP session-proxy equal-quality-tie",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "provider401 becomes502 with safe actionable error",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "malformed provider JSON becomes502",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "actual generation route retains truncation marker",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    },
+    {
+      "name": "prepared example grades without key through actual route",
+      "status": "passed",
+      "method": "actual-local-http; offline-provider-fixture"
+    }
+  ],
+  "passed": 37
+}

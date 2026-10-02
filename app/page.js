@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, FlaskConical, Play, Plus, RefreshCw, Square, Trash2, X } from 'lucide-react';
 import AccountGate from './components/AccountGate';
 import { session, ownerStorageKey } from './client/session.mjs';
-import { LIMITS, newId as uid, parsePromptFile, csvEscape, readWorkspace, runQueue, invalidateComparison } from './client/workspace.mjs';
+import { GRADER_PROVIDERS, graderSelection, graderProblem, finishWarning } from './client/grader.mjs';
+import { LIMITS, newId as uid, parsePromptFile, csvEscape, readWorkspace, runQueue, invalidateComparison, createImportGate } from './client/workspace.mjs';
 
 const DEFAULT_SYSTEM = "You are a helpful assistant. Answer clearly with specific reasons. If a reference is supplied, use only the reference and say when it does not contain the answer.";
 const DEFAULT_MODELS = ["Qwen/Qwen3-4B-Instruct-2507", "meta-llama/Llama-3.1-8B-Instruct", ""];
@@ -12,12 +13,11 @@ const SAMPLE_PROMPTS = [
   { prompt: "Recommend a romantic movie. Give three distinct reasons and one caveat, under 120 words.", reference: "" },
   { prompt: "Who directed Inception (2010)? Answer with the name only.", reference: "Christopher Nolan" },
 ];
-const GRADER_FALLBACK = [];
 const CONCURRENCY = 3;
 const GRADE_CONCURRENCY = 2;
 
 const ck = (pid, model) => `${pid}|${model}`;
-const fmtMs = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`);
+const fmtMs = (ms) => (ms == null ? "Timing unavailable" : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`);
 
 function download(name, text, type, epoch) {
   session.assert(epoch);
@@ -37,14 +37,17 @@ function ArenaWorkspace({ ownerId }) {
   const [exampleId, setExampleId] = useState(null);
   const [loadingExample, setLoadingExample] = useState(false);
   const [available, setAvailable] = useState([]);
-  const [graders, setGraders] = useState(GRADER_FALLBACK);
+  const [tab, setTab] = useState("compare");
+  const [graderProvider, setGraderProvider] = useState("gemini");
+  const [graderKey, setGraderKey] = useState(""); // Session memory only: never persist or export.
+  const [showKey, setShowKey] = useState(false);
   const [models, setModels] = useState(DEFAULT_MODELS);
   const [system, setSystem] = useState(DEFAULT_SYSTEM);
   const [corpus, setCorpus] = useState("");
   const [placement, setPlacement] = useState("user");
   const [maxTokens, setMaxTokens] = useState(300);
   const [temperature, setTemperature] = useState(0);
-  const [grader, setGrader] = useState("");
+  const [grader, setGrader] = useState("gemini-2.5-flash-lite");
   const [prompts, setPrompts] = useState(() => SAMPLE_PROMPTS.map((p, i) => ({ id: `sample-${i + 1}`, ...p })));
   const [results, setResults] = useState({});
   const [grades, setGrades] = useState({});
@@ -58,10 +61,10 @@ function ArenaWorkspace({ ownerId }) {
 
   const ownerEpoch = useRef(session.capture());
   const exampleRef = useRef(null);
-  const graderRef = useRef(grader);
-  useEffect(() => { graderRef.current = grader; }, [grader]);
   const lifetime = useRef(null);
   const readers = useRef(new Set());
+  const imports = useRef(null);
+  if (!imports.current) imports.current = createImportGate();
   const busyRef = useRef(false);
   const storageWritable = useRef(true);
   const STORAGE_KEY = ownerStorageKey(ownerId);
@@ -74,7 +77,8 @@ function ArenaWorkspace({ ownerId }) {
       if (saved) {
         setModels(saved.models); setSystem(saved.system); setCorpus(saved.corpus);
         setPlacement(saved.placement); setMaxTokens(saved.maxTokens); setTemperature(saved.temperature);
-        if (typeof saved.grader === 'string') setGrader(saved.grader);
+        const provider = saved.graderProvider || 'gemini';
+        if (graderSelection(provider, saved.grader)) { setGraderProvider(provider); setGrader(saved.grader); }
         setPrompts(saved.prompts); setResults(saved.results); setGrades(saved.grades);
         if (typeof saved.exampleId === 'string') { setExampleId(saved.exampleId); exampleRef.current = saved.exampleId; }
       }
@@ -86,11 +90,11 @@ function ArenaWorkspace({ ownerId }) {
   useEffect(() => {
     if (!loaded || !storageWritable.current || !session.current(ownerEpoch.current) || lifetime.current?.signal.aborted) return;
     try {
-      const saved = JSON.stringify({ models, system, corpus, placement, maxTokens, temperature, grader, prompts, results, grades, exampleId });
+      const saved = JSON.stringify({ models, system, corpus, placement, maxTokens, temperature, grader, graderProvider, prompts, results, grades, exampleId });
       if (saved.length > LIMITS.savedBytes) throw new Error('storage');
       localStorage.setItem(STORAGE_KEY, saved);
     } catch { setNotice({ kind: 'error', text: 'Browser storage is full. Export your results to keep this comparison.' }); }
-  }, [loaded, STORAGE_KEY, models, system, corpus, placement, maxTokens, temperature, grader, prompts, results, grades, exampleId]);
+  }, [loaded, STORAGE_KEY, models, system, corpus, placement, maxTokens, temperature, grader, graderProvider, prompts, results, grades, exampleId]);
 
   const api = useCallback((path, opts = {}, epoch = ownerEpoch.current) => session.request(path, { ...opts, signal: lifetime.current?.signal, headers: { 'Content-Type': 'application/json', ...opts.headers } }, epoch), []);
   const active = epoch => session.current(epoch) && !lifetime.current?.signal.aborted;
@@ -103,22 +107,15 @@ function ArenaWorkspace({ ownerId }) {
 
   const refreshModels = useCallback(async () => {
     const epoch = ownerEpoch.current;
-    const [m, g] = await Promise.allSettled([api('/api/models', {}, epoch), api('/api/grader-models', {}, epoch)]);
-    if (!active(epoch)) return;
-    const errors = [];
-    if (m.status === 'fulfilled') setAvailable(m.value.models || []);
-    else if (m.reason.name !== 'AbortError') errors.push(`HF model list: ${m.reason.message}`);
-    if (g.status === 'fulfilled') {
-      if (g.value.models?.length) {
-        setGraders(g.value.models);
-        if (!exampleRef.current && !g.value.models.includes(graderRef.current)) { setGrader(g.value.models.includes(g.value.default) ? g.value.default : g.value.models[0]); setGrades({}); }
-      }
-    } else if (g.reason.name !== 'AbortError') errors.push(`Grader list: ${g.reason.message}`);
-    if (errors.length) setNotice({ kind: 'error', text: errors.join(' ') });
+    try {
+      const m = await api('/api/models', {}, epoch);
+      if (active(epoch)) setAvailable(m.models || []);
+    } catch (e) { if (active(epoch) && e.name !== 'AbortError') setNotice({ kind: 'error', text: `HF model list: ${e.message}` }); }
   }, [api]);
   useEffect(() => { if (loaded && config.loaded) refreshModels(); }, [loaded, config.loaded, refreshModels]);
 
   function edit(options = {}) {
+    if (!options.importResult) imports.current.invalidateAll();
     storageWritable.current = true;
     setResults(prev => invalidateComparison(prev, {}, options).results);
     setGrades(prev => invalidateComparison({}, prev, options).grades);
@@ -126,20 +123,21 @@ function ArenaWorkspace({ ownerId }) {
   }
   async function loadExample() {
     if (busyRef.current) return;
+    imports.current.invalidateAll();
     const epoch = ownerEpoch.current; setLoadingExample(true); busyRef.current = true;
     try {
       const example = await api('/api/example', {}, epoch); if (!active(epoch)) return;
       storageWritable.current = true;
       const x = example.settings;
       setModels([...x.models, '', '', ''].slice(0, 3)); setSystem(x.system); setCorpus(x.corpus);
-      setPlacement(x.placement); setMaxTokens(x.maxTokens); setTemperature(x.temperature); setGrader(x.grader);
+      setPlacement(x.placement); setMaxTokens(x.maxTokens); setTemperature(x.temperature);
       setPrompts(example.prompts); setResults({}); setGrades({}); exampleRef.current = example.id; setExampleId(example.id);
       setNotice({ kind: 'info', text: 'Prepared example loaded. Select Run all, then Grade all. Both are free.' });
     } catch (e) { if (active(epoch) && e.name !== 'AbortError') setNotice({ kind: 'error', text: e.message }); }
     finally { if (active(epoch)) { setLoadingExample(false); busyRef.current = false; } }
   }
 
-  useEffect(() => { if (!notice) return; const t = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(t); }, [notice]);
+  useEffect(() => { if (!notice || notice.kind === 'error') return; const t = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(t); }, [notice]);
 
   function buildMessages(promptText) {
     const hasCorpus = corpus.trim().length > 0;
@@ -168,6 +166,7 @@ function ArenaWorkspace({ ownerId }) {
 
   async function runAll(onlyId = null) {
     if (busyRef.current) return;
+    imports.current.invalidateAll();
     const epoch = ownerEpoch.current;
     if (!activeModels.length) return setNotice({ kind: "error", text: "Pick at least one model." });
     const targets = prompts.filter((p) => p.prompt.trim() && (!onlyId || p.id === onlyId));
@@ -191,23 +190,25 @@ function ArenaWorkspace({ ownerId }) {
     if (!responses.length) return;
     setGrades((prev) => ({ ...prev, [p.id]: { status: "running" } }));
     try {
-      const j = await api("/api/grade", { method: "POST", body: JSON.stringify({ grader, prompt: p.prompt, reference: p.reference || "", corpus, systemPrompt: system, responses, ...(exampleId ? { example_id: exampleId, prompt_id: p.id } : {}) }) }, epoch);
+      const j = await api("/api/grade", { method: "POST", body: JSON.stringify({ grader, graderProvider, graderKey, prompt: p.prompt, reference: p.reference || "", corpus, systemPrompt: system, responses, ...(exampleId ? { example_id: exampleId, prompt_id: p.id } : {}) }) }, epoch);
       if (!active(epoch)) return;
       setGrades((prev) => ({ ...prev, [p.id]: { status: "done", ...j } }));
     } catch (e) {
       if (!active(epoch) || e.name === 'AbortError') return;
-      setGrades((prev) => ({ ...prev, [p.id]: { status: "error", error: e.message } }));
+      setGrades((prev) => ({ ...prev, [p.id]: { status: "error", error: e.message, requestId: e.requestId } }));
     }
   }
 
   async function gradeSingle(p) {
-    if (!exampleId && !grader) return setNotice({ kind: 'error', text: 'Choose an available grader or try the prepared example.' });
+    imports.current.invalidateAll();
+    if (!exampleId && graderProblem(graderProvider, grader, graderKey)) { setTab('configure'); return setNotice({ kind: 'error', text: graderProblem(graderProvider, grader, graderKey) }); }
     if (busyRef.current) return; const epoch = ownerEpoch.current;
     busyRef.current = true; setGrading(true);
     try { await gradeRow(p, epoch); } finally { if (active(epoch)) { busyRef.current = false; setGrading(false); } }
   }
   async function gradeAll() {
-    if (!exampleId && !grader) return setNotice({ kind: 'error', text: 'Choose an available grader or try the prepared example.' });
+    imports.current.invalidateAll();
+    if (!exampleId && graderProblem(graderProvider, grader, graderKey)) { setTab('configure'); return setNotice({ kind: 'error', text: graderProblem(graderProvider, grader, graderKey) }); }
     if (busyRef.current) return; const epoch = ownerEpoch.current;
     const targets = prompts.filter(rowDone);
     if (!targets.length) return setNotice({ kind: "error", text: "Run the prompts first; grading needs every model's answer for a row." });
@@ -235,7 +236,7 @@ function ArenaWorkspace({ ownerId }) {
   function exportJson() {
     const epoch = ownerEpoch.current; if (!active(epoch)) return;
     download(`model-arena-${new Date().toISOString().slice(0, 19)}.json`, JSON.stringify({
-      exportedAt: new Date().toISOString(), settings: { models: activeModels, system, corpusChars: corpus.length, placement, maxTokens, temperature, grader },
+      exportedAt: new Date().toISOString(), settings: { models: activeModels, system, corpusChars: corpus.length, placement, maxTokens, temperature, grader, graderProvider },
       prompts, results, grades, summary,
     }, null, 2), "application/json", epoch);
   }
@@ -249,34 +250,63 @@ function ArenaWorkspace({ ownerId }) {
     download(`model-arena-${new Date().toISOString().slice(0, 19)}.csv`, rows.map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv", epoch);
   }
 
-  function readFile(file, apply) {
+  function readFile(file, kind, apply) {
     const epoch = ownerEpoch.current; if (!active(epoch)) return;
+    const isLatest = imports.current.begin(kind);
     if (file.size > LIMITS.fileBytes) return setNotice({ kind: 'error', text: 'Choose a file smaller than 2 MiB.' });
     const reader = new FileReader(); readers.current.add(reader);
-    reader.onload = () => { if (!active(epoch)) return; try { apply(String(reader.result)); } catch (e) { setNotice({ kind: 'error', text: e.message }); } };
-    reader.onerror = () => { if (active(epoch)) setNotice({ kind: 'error', text: 'This file could not be read. Try a text or JSON file.' }); };
+    reader.onload = () => { if (!active(epoch) || !isLatest()) return; try { apply(String(reader.result)); } catch (e) { setNotice({ kind: 'error', text: e.message }); } };
+    reader.onerror = () => { if (active(epoch) && isLatest()) setNotice({ kind: 'error', text: 'This file could not be read. Try a text or JSON file.' }); };
     reader.onloadend = () => readers.current.delete(reader); reader.readAsText(file);
   }
-  function onPromptFile(file) { readFile(file, text => { const list = parsePromptFile(text); edit(); setPrompts(list); setResults({}); setGrades({}); setNotice({ kind: 'info', text: `Loaded ${list.length} prompts.${exampleId ? ' Run and Grade now use live providers.' : ''}` }); }); }
-  function onCorpusFile(file) { readFile(file, text => { if (text.length > LIMITS.corpus) throw new Error('The reference corpus is limited to 30,000 characters.'); edit(); setCorpus(text); setNotice({ kind: 'info', text: `Loaded ${file.name} (${text.length.toLocaleString()} characters).${exampleId ? ' Run and Grade now use live providers.' : ''}` }); }); }
+  function onPromptFile(file) { readFile(file, 'prompts', text => { const list = parsePromptFile(text); edit({ importResult: true }); setPrompts(list); setResults({}); setGrades({}); setNotice({ kind: 'info', text: `Loaded ${list.length} prompts.${exampleId ? ' Run and Grade now use live providers.' : ''}` }); }); }
+  function onCorpusFile(file) { readFile(file, 'corpus', text => { if (text.length > LIMITS.corpus) throw new Error('The reference corpus is limited to 30,000 characters.'); edit({ importResult: true }); setCorpus(text); setNotice({ kind: 'info', text: `Loaded ${file.name} (${text.length.toLocaleString()} characters).${exampleId ? ' Run and Grade now use live providers.' : ''}` }); }); }
 
   const corpusWarn = corpus.length > 12000;
   const busy = running || grading || loadingExample;
+  const graderIssue = graderProblem(graderProvider, grader, graderKey);
+  const canGrade = Boolean(exampleId) || !graderIssue;
+  function chooseTab(next, focus = false) {
+    setTab(next);
+    if (focus) document.getElementById(`tab-${next}`)?.focus();
+  }
+  function tabKey(event) {
+    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      chooseTab(event.key === 'Home' ? 'compare' : event.key === 'End' ? 'configure' : tab === 'compare' ? 'configure' : 'compare', true);
+    }
+  }
 
   return (
     <div className="shell">
-      <h2 className="sr-only">Model Arena: compare small Hugging Face models on your prompts and grade them with Gemini</h2>
+      <h2 className="sr-only">Model Arena: compare small Hugging Face models on your prompts and grade them with your chosen provider</h2>
       <section className="workspace-intro">
-        <div><span className="eyebrow">Compare · inspect · decide</span><h1>Put your models to the test.</h1><p className="sub">Use the same prompts and reference. Compare each answer, then inspect Gemini’s independent scores.</p></div>
+        <div><span className="eyebrow">Compare · inspect · decide</span><h1>Put your models to the test.</h1><p className="sub">Use the same prompts and reference. Compare each answer, then inspect scores from your chosen grader.</p></div>
         <button className="btn primary" onClick={loadExample} disabled={busy} aria-busy={loadingExample}><FlaskConical aria-hidden="true" />{loadingExample ? 'Loading example…' : 'Try with an example'}</button>
       </section>
       <div className="workspace-status">
         <span className={`badge ${exampleId ? 'ok' : 'accent'}`}>{exampleId ? 'Prepared example · no provider calls' : config.providerMode === 'mock' ? 'Development mock · no provider calls' : 'Live comparison'}</span>
-        <span className="hint">{exampleId ? 'Run all → Grade all → compare the scores. Editing any input switches to live mode.' : config.providerMode === 'mock' ? 'Development fixtures replace provider responses. Prepared scores are illustrative.' : 'Run uses Hugging Face; Grade uses Gemini. Each selected prompt and model adds calls.'}</span>
-        {!exampleId && config.loaded && <span className="hint">{config.hf ? 'HF ready' : 'HF unavailable'} · {config.gemini ? 'Gemini ready' : 'Gemini unavailable'}</span>}
+        <span className="hint">{exampleId ? 'Run all → Grade all → compare the scores. Editing any input switches to live mode.' : config.providerMode === 'mock' ? 'Development fixtures replace provider responses. Prepared scores are illustrative.' : 'Run uses Hugging Face. Grade uses your provider key and is billed directly by that provider. Each prompt adds a grading call.'}</span>
+        {!exampleId && config.loaded && <span className="hint">{config.hf ? 'HF ready' : 'HF unavailable'} · {graderIssue ? 'Grader needs configuration' : `${graderProvider} key entered · not verified`}</span>}
       </div>
 
-      <div className="layout">
+      <div className="workspace-tabs" role="tablist" aria-label="Workspace view">
+        {['compare', 'configure'].map(value => <button key={value} id={`tab-${value}`} role="tab" className={`btn ${tab === value ? 'primary' : ''}`} aria-selected={tab === value} aria-controls={`panel-${value}`} tabIndex={tab === value ? 0 : -1} onKeyDown={tabKey} onClick={() => chooseTab(value)}>{value === 'compare' ? 'Compare' : 'Configure'}</button>)}
+      </div>
+      <section id="panel-configure" role="tabpanel" aria-labelledby="tab-configure" hidden={tab !== 'configure'} tabIndex={0} className="configure-panel card">
+        <div className="cardhead"><h2>Configure your grader</h2><span className="badge">Your API key · this session only</span></div>
+        <p>Choose who scores the answers. Your key stays in this page’s memory and is sent securely through our server only when you select Grade. It is cleared on reload, sign-out or provider change.</p>
+        <div className="configure-fields">
+          <div className="field"><label htmlFor="grader-provider">Provider</label><select id="grader-provider" value={graderProvider} disabled={busy} onChange={e => { edit({ gradesOnly: true }); setGraderProvider(e.target.value); setGrader(GRADER_PROVIDERS.find(p => p.id === e.target.value).models[0]); setGraderKey(''); setShowKey(false); }}>{GRADER_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+          <div className="field"><label htmlFor="grader-model">Model</label><select id="grader-model" value={grader} disabled={busy} onChange={e => { edit({ gradesOnly: true }); setGrader(e.target.value); }}>{GRADER_PROVIDERS.find(p => p.id === graderProvider).models.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+          <div className="field key-field"><label htmlFor="grader-key">API key</label><input id="grader-key" name="arena-session-key" type={showKey ? 'text' : 'password'} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={4096} value={graderKey} disabled={busy} placeholder="Paste your provider API key" aria-describedby="grader-key-help" onChange={e => { setGraderKey(e.target.value); }} /><div className="actions"><button className="btn small" disabled={busy || !graderKey} aria-pressed={showKey} onClick={() => setShowKey(v => !v)}>{showKey ? 'Hide key' : 'Show key'}</button><button className="btn small" disabled={busy || !graderKey} onClick={() => { setGraderKey(''); setShowKey(false); }}>Clear key</button></div></div>
+        </div>
+        <p id="grader-key-help" className="hint">Keys are never saved in browser storage, exported, or stored in our database. Model access and key validity are checked by the provider on your first grading request; entering a key makes no provider call.</p>
+        <p className="config-billing">Grading is charged to your provider account, outside the hosted generation allowance. Model Arena does not estimate its price. Each call sends the prompt, system prompt, reference corpus and anonymised answers to the selected provider. Review that provider’s data policies before sending sensitive material.</p>
+        <p role="status" className={graderIssue ? 'hint' : 'configured-status'}>{graderIssue || `${graderProvider} key entered. Ready to request grading; key and account access are not yet verified.`}</p>
+        <div className="actions"><button className="btn primary" onClick={() => chooseTab('compare', true)}>Back to comparison</button><span className="hint">Prepared examples work without any key.</span></div>
+      </section>
+      <div id="panel-compare" role="tabpanel" aria-labelledby="tab-compare" hidden={tab !== 'compare'} tabIndex={0} className="layout">
         <aside className="side">
           <section className="card">
             <div className="cardhead"><h2>Models</h2><button className="btn small" onClick={refreshModels} disabled={busy}><RefreshCw aria-hidden="true" />Refresh list</button></div>
@@ -329,10 +359,10 @@ function ArenaWorkspace({ ownerId }) {
 
           <section className="card">
             <div className="cardhead"><h2>Grader</h2></div>
-            <div className="field"><label htmlFor="grader">Gemini model</label>
-              <select id="grader" value={grader} onChange={(e) => { edit({ gradesOnly: true }); setGrader(e.target.value); }} disabled={busy}>{!grader && <option value="">Waiting for available graders…</option>}{[...new Set([grader, ...graders])].filter(Boolean).map((g) => <option key={g} value={g}>{g}</option>)}</select>
-              <span className="hint">Scores accuracy, helpfulness and format from 1 to 10, then names the best. Answers are shuffled and anonymised before grading.</span>
-            </div>
+            <p className="mono">{exampleId ? 'Prepared example grader' : grader}</p>
+            <p className="hint">Scores accuracy, helpfulness and format from 1 to 10. Answers are shuffled and anonymised. Scores are judgments, not ground truth.</p>
+            {!exampleId && <p className="hint">{graderIssue ? 'Add your API key before grading.' : 'Key entered · billed by your provider'}</p>}
+            <button className="btn" onClick={() => chooseTab('configure', true)}>Configure grader</button>
           </section>
         </aside>
 
@@ -364,7 +394,7 @@ function ArenaWorkspace({ ownerId }) {
               <div className="actions">
                 <button className="btn primary" onClick={() => runAll()} disabled={busy}><Play aria-hidden="true" />{running ? "Running…" : "Run all"}</button>
                 {running && <button className="btn" onClick={() => { stopRef.current = true; }}><Square aria-hidden="true" />Stop after current</button>}
-                <button className="btn" onClick={gradeAll} disabled={busy}>{grading ? "Grading…" : "Grade all"}</button>
+                <button className="btn" onClick={gradeAll} disabled={busy || !canGrade}>{grading ? "Grading…" : "Grade all"}</button>
                 <button className="btn" onClick={exportJson} disabled={!Object.keys(results).length}><Download aria-hidden="true" />Export JSON</button>
                 <button className="btn" onClick={exportCsv} disabled={!Object.keys(results).length}><Download aria-hidden="true" />Export CSV</button>
                 <button className="btn danger" onClick={() => { setResults({}); setGrades({}); }} disabled={busy || !Object.keys(results).length}><Trash2 aria-hidden="true" />Clear results</button>
@@ -382,9 +412,9 @@ function ArenaWorkspace({ ownerId }) {
                           <td className="pcol"><div className="pcell">{p.prompt}{p.reference ? <div className="ref">Reference: {p.reference}</div> : null}
                             <div className="rowbtns">
                               <button className="btn small" onClick={() => runAll(p.id)} disabled={busy}>Run</button>
-                              <button className="btn small" onClick={() => gradeSingle(p)} disabled={busy || !rowDone(p)}>Grade</button>
+                              <button className="btn small" onClick={() => gradeSingle(p)} disabled={busy || !rowDone(p) || !canGrade}>Grade</button>
                               {g?.status === "running" && <span className="badge accent">grading…</span>}
-                              {g?.status === "error" && <span className="badge bad" title={g.error}>grader error</span>}
+                              {g?.status === "error" && <button className="badge bad" aria-controls={`grade-error-${encodeURIComponent(p.id)}`} onClick={() => { const target = document.getElementById(`grade-error-${encodeURIComponent(p.id)}`); target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: 'nearest' }); }}>Grading failed · Details</button>}
                               {g?.status === "done" && <span className="badge ok">{g.cached ? "Prepared grade · no provider" : `graded by ${g.grader}`}</span>}
                             </div>
                           </div></td>
@@ -402,6 +432,7 @@ function ArenaWorkspace({ ownerId }) {
                                   {r?.status === "done" && <><span className="badge ok">{fmtMs(r.ms)}</span>{r.usage?.completion_tokens != null && <span>{r.usage.completion_tokens} tokens</span>}{r.finish && r.finish !== "stop" && <span className="badge warn">{r.finish}</span>}{r.attempts > 1 && <span>{r.attempts} attempts</span>}</>}
                                   {g?.status === "done" && g.best === m && <span className="badge accent">best</span>}
                                 </div>
+                                {r?.status === "done" && finishWarning(r.finish) && <p className="answer-warning">{finishWarning(r.finish)}</p>}
                                 {r?.status === "done" && <div className={`resp${r.text ? "" : " empty"}`}>{r.text || "empty answer"}</div>}
                                 {r?.status === "error" && <div className="resp empty">{r.error}</div>}
                                 {s && <div className="scores"><span className="score big">{s.overall}</span><span className="score">acc {s.accuracy}</span><span className="score">help {s.helpfulness}</span><span className="score">fmt {s.format}</span></div>}
@@ -410,19 +441,27 @@ function ArenaWorkspace({ ownerId }) {
                             );
                           })}
                         </tr>
+
                       );
                     })}
                   </tbody>
                 </table>
               </div>
             )}
+            <div className="grade-errors">
+              {prompts.map((p, index) => { const failure = grades[p.id]; return failure?.status === 'error' ? <div key={p.id} id={`grade-error-${encodeURIComponent(p.id)}`} tabIndex={-1} className="grade-error" role="alert">
+                <p><strong>Grading failed · Prompt {index + 1}</strong></p><p className="hint">{p.prompt.length > 160 ? `${p.prompt.slice(0, 160)}…` : p.prompt}</p><p>{failure.error}</p>
+                <p>Your model answers are preserved. A failed provider request may still be charged. Retry only when ready.</p>
+                <button className="btn small" onClick={() => chooseTab('configure', true)}>Configure grader</button>{failure.requestId && <p className="hint">Support reference: {failure.requestId}</p>}
+              </div> : null; })}
+            </div>
           </section>
 
           <section className="card">
-            <div className="cardhead"><h2>Summary</h2><span className="count">averages over graded prompts</span></div>
+            <div className="cardhead"><h2>Summary</h2><span className="count">averages over graded prompts · {Object.values(grades).filter(g => g?.status === "error").length} grading failures</span></div>
             {!activeModels.length ? <p className="empty-state">Nothing to summarise yet.</p> : (
               <div className="tablewrap" tabIndex={0} aria-label="Model score summary"><table className="summary">
-                <thead><tr><th>model</th><th className="n">graded</th><th className="n">accuracy</th><th className="n">helpfulness</th><th className="n">format</th><th className="n">overall</th><th className="n">wins</th><th className="n">errors</th><th className="n">avg latency</th></tr></thead>
+                <thead><tr><th>model</th><th className="n">graded</th><th className="n">accuracy</th><th className="n">helpfulness</th><th className="n">format</th><th className="n">overall</th><th className="n">wins</th><th className="n">run errors</th><th className="n">avg latency</th></tr></thead>
                 <tbody>{summary.map((s) => (
                   <tr key={s.model}><td className="mono">{s.model}</td><td className="n">{s.graded}</td><td className="n">{s.accuracy}</td><td className="n">{s.helpfulness}</td><td className="n">{s.format}</td><td className="n">{s.overall}</td><td className="n">{s.wins}</td><td className="n">{s.errors}</td><td className="n">{s.avgMs != null ? fmtMs(s.avgMs) : "–"}</td></tr>
                 ))}</tbody>
@@ -432,7 +471,7 @@ function ArenaWorkspace({ ownerId }) {
         </main>
       </div>
 
-      {notice && <div role={notice.kind === "error" ? "alert" : "status"} className={`toast ${notice.kind === "error" ? "error" : ""}`}>{notice.text}</div>}
+      {notice && <div role={notice.kind === "error" ? "alert" : "status"} className={`toast ${notice.kind === "error" ? "error" : ""}`}>{notice.text}{notice.kind === "error" && <button className="btn small" onClick={() => setNotice(null)} aria-label="Dismiss notification">Dismiss</button>}</div>}
     </div>
   );
 }

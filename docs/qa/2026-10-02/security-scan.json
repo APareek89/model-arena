@@ -1,0 +1,6 @@
+{
+  "scan": "tracked and untracked nonignored provider-secret patterns",
+  "matching_files": [],
+  "limitations": "Pattern scan complements source review; not a proof no secret can exist.",
+  "env_ignored": true
+}

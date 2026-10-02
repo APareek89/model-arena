@@ -1,0 +1,259 @@
+{
+  "source": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
+  "retrieved": "2026-10-02",
+  "purpose": "Official public documentation excerpt; no provider invocation.",
+  "schemas": {
+    "GenerateContentRequest": {
+      "properties": {
+        "cachedContent": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "tools": {
+          "type": "array"
+        },
+        "serviceTier": {
+          "enum": [
+            "unspecified",
+            "standard",
+            "flex",
+            "priority"
+          ],
+          "type": "string"
+        },
+        "toolConfig": {},
+        "systemInstruction": {},
+        "contents": {
+          "type": "array"
+        },
+        "labels": {
+          "type": "object"
+        },
+        "safetySettings": {
+          "type": "array"
+        },
+        "generationConfig": {},
+        "store": {
+          "type": "boolean"
+        }
+      }
+    },
+    "GenerationConfig": {
+      "properties": {
+        "enableAffectiveDialog": {
+          "type": "boolean"
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "responseFormat": {},
+        "responseSchema": {},
+        "responseJsonSchema": {
+          "type": "any"
+        },
+        "presencePenalty": {
+          "type": "number"
+        },
+        "mediaResolution": {
+          "type": "string",
+          "enum": [
+            "MEDIA_RESOLUTION_UNSPECIFIED",
+            "MEDIA_RESOLUTION_LOW",
+            "MEDIA_RESOLUTION_MEDIUM",
+            "MEDIA_RESOLUTION_HIGH"
+          ]
+        },
+        "translationConfig": {},
+        "enableEnhancedCivicAnswers": {
+          "type": "boolean"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "responseModalities": {
+          "type": "array"
+        },
+        "thinkingConfig": {},
+        "responseMimeType": {
+          "type": "string"
+        },
+        "stopSequences": {
+          "type": "array"
+        },
+        "responseLogprobs": {
+          "type": "boolean"
+        },
+        "topK": {
+          "type": "integer"
+        },
+        "audioTranscriptionConfig": {},
+        "candidateCount": {
+          "type": "integer"
+        },
+        "imageConfig": {},
+        "frequencyPenalty": {
+          "type": "number"
+        },
+        "_responseJsonSchema": {
+          "type": "any"
+        },
+        "maxOutputTokens": {
+          "type": "integer"
+        },
+        "logprobs": {
+          "type": "integer"
+        },
+        "speechConfig": {},
+        "topP": {
+          "type": "number"
+        }
+      }
+    },
+    "ThinkingConfig": {
+      "properties": {
+        "includeThoughts": {
+          "type": "boolean"
+        },
+        "thinkingBudget": {
+          "type": "integer"
+        },
+        "thinkingLevel": {
+          "enum": [
+            "THINKING_LEVEL_UNSPECIFIED",
+            "MINIMAL",
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "Schema": {
+      "properties": {
+        "maxProperties": {
+          "type": "string"
+        },
+        "minLength": {
+          "type": "string"
+        },
+        "maxLength": {
+          "type": "string"
+        },
+        "items": {},
+        "maxItems": {
+          "type": "string"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "default": {
+          "type": "any"
+        },
+        "propertyOrdering": {
+          "type": "array"
+        },
+        "properties": {
+          "type": "object"
+        },
+        "enum": {
+          "type": "array"
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "minProperties": {
+          "type": "string"
+        },
+        "minItems": {
+          "type": "string"
+        },
+        "nullable": {
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "TYPE_UNSPECIFIED",
+            "STRING",
+            "NUMBER",
+            "INTEGER",
+            "BOOLEAN",
+            "ARRAY",
+            "OBJECT",
+            "NULL"
+          ],
+          "type": "string"
+        },
+        "required": {
+          "type": "array"
+        },
+        "anyOf": {
+          "type": "array"
+        },
+        "example": {
+          "type": "any"
+        }
+      }
+    },
+    "Content": {
+      "properties": {
+        "parts": {
+          "type": "array"
+        },
+        "role": {
+          "type": "string"
+        }
+      }
+    },
+    "Part": {
+      "properties": {
+        "fileData": {},
+        "toolResponse": {},
+        "speechMetadata": {},
+        "toolCall": {},
+        "videoMetadata": {},
+        "executableCode": {},
+        "inlineData": {},
+        "thoughtSignature": {
+          "type": "string"
+        },
+        "audioTranscription": {},
+        "codeExecutionResult": {},
+        "mediaResolution": {},
+        "thought": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        },
+        "partMetadata": {
+          "type": "object"
+        },
+        "functionResponse": {},
+        "mediaProcessing": {
+          "enum": [
+            "MEDIA_PROCESSING_UNSPECIFIED",
+            "STATIC",
+            "AGENTIC"
+          ],
+          "type": "string"
+        },
+        "functionCall": {}
+      }
+    }
+  }
+}

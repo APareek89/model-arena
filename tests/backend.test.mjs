@@ -108,15 +108,15 @@ test("provider 429 has no automatic retry and retains conservative reservation",
   await assert.rejects(generate(a,{model:priced.id,messages:[{role:"user",content:"fixture"}],max_tokens:64}),error=>error.status===502&&!error.message.includes("expose"));assert.equal(calls,1);
   assert.equal((await query("SELECT status FROM usage WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 1",[a.id])).rows[0].status,"uncertain");
 });
-test("Gemini malformed grade keeps known billed usage and bounded anonymous request",async()=>{
-  process.env.MODEL_ARENA_MOCK_MODE="0";process.env.GEMINI_API_KEY="unit";let calls=0;
+test("BYOK malformed grade preserves hosted allowance and never uses the server key",async()=>{
+  process.env.MODEL_ARENA_MOCK_MODE="0";process.env.GEMINI_API_KEY="never-use-shared-key";let calls=0;
+  const before=await ownUsage(a);
   globalThis.fetch=async(url,init)=>{
-    assert.ok(!String(url).includes("key="));
-    if(String(url).includes("?pageSize="))return response({models:[{name:"models/gemini-2.5-flash-lite",supportedGenerationMethods:["generateContent"]}]});
-    calls++;const body=JSON.parse(init.body);assert.equal(body.generationConfig.maxOutputTokens,2048);assert.equal(body.generationConfig.thinkingConfig.thinkingBudget,0);assert.ok(!JSON.stringify(body).includes("private-model"));return response({candidates:[{content:{parts:[{text:"invalid JSON"}]}}],usageMetadata:{promptTokenCount:120,candidatesTokenCount:20,thoughtsTokenCount:5}});
+    assert.ok(!String(url).includes("key="));assert.equal(init.headers['x-goog-api-key'],'synthetic-user-key');
+    calls++;const body=JSON.parse(init.body);assert.equal(body.generationConfig.maxOutputTokens,2048);assert.equal(body.generationConfig.thinkingConfig.thinkingBudget,0);assert.ok(!JSON.stringify(body).includes("private-model"));return response({candidates:[{finishReason:"STOP",content:{parts:[{text:"invalid JSON"}]}}],usageMetadata:{promptTokenCount:120,candidatesTokenCount:20}});
   };
-  await assert.rejects(grade(a,{prompt:"Question",responses:[{model:"private-model",text:"Answer"}]}),/unreadable scores/);assert.equal(calls,1);
-  const row=(await query("SELECT status,input_tokens,output_tokens,reasoning_output_tokens FROM usage WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 1",[a.id])).rows[0];assert.equal(row.status,"complete");assert.equal(row.output_tokens,25);assert.equal(row.reasoning_output_tokens,5);
+  await assert.rejects(grade(a,{graderKey:'synthetic-user-key',prompt:"Question",responses:[{model:"private-model",text:"Answer"}]}),/unreadable scores/);assert.equal(calls,1);
+  assert.deepEqual(await ownUsage(a),before);
 });
 test("bounded JSON bodies and decoded provider responses reject expansion",async()=>{
   await assert.rejects(readJson(new Request("http://localhost/",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({value:"x".repeat(100)})}),32),/large/);

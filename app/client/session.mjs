@@ -25,7 +25,9 @@ export function createClientSession(fetcher, onExpire = () => {}) {
         accept({ enabled: true, user: null }); onExpire();
         throw new DOMException('Your session expired. Sign in again.', 'AbortError');
       }
-      throw new Error(typeof data.error === 'string' ? data.error : 'The request could not be completed. Please try again.');
+      const error = new Error(typeof data.error === 'string' ? data.error : 'The request could not be completed. Please try again.');
+      if (typeof data.requestId === 'string' && /^[0-9a-f-]{36}$/.test(data.requestId)) error.requestId = data.requestId;
+      throw error;
     }
     return data;
   }

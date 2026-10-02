@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata = {
   title: "Model Arena",
-  description: "Compare small Hugging Face models side by side on your own prompts and grade them with Gemini.",
+  description: "Compare small Hugging Face models side by side on your own prompts and grade them with Gemini, OpenAI or Claude using your own key.",
 };
 
 export default function RootLayout({ children }) {

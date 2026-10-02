@@ -1,6 +1,7 @@
 node_modules
 .next
 .next-integrated
+.next-fmea-*
 out
 .vercel
 .env
